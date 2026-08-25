@@ -1,0 +1,211 @@
+// Esquema de datos de "Entrená con Chino"
+// Mapeado directo desde los prototipos (app-alumno_1.html y panel-coach_1.html).
+// DB: PostgreSQL. Ajustá tipos/índices según haga falta al avanzar.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// USUARIOS Y ROLES
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  COACH
+  STUDENT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  name         String
+  initials     String? // "MS", "CD" — para los avatares de los prototipos
+  createdAt    DateTime @default(now())
+
+  // Si es alumno, su perfil de entrenamiento
+  studentProfile StudentProfile?
+
+  // Rutinas que creó (si es coach)
+  routinesCreated Routine[] @relation("CoachRoutines")
+
+  // Mensajes que mandó
+  messagesSent Message[] @relation("MessageSender")
+}
+
+model StudentProfile {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coachId       String? // qué coach lo lleva
+  plan          String? // "Hipertrofia · 5 días", "Iniciación · 3 días", ...
+  planStartDate DateTime?
+  planActive    Boolean   @default(true)
+  nextPayment   DateTime?
+
+  assignments Assignment[]
+  sessions    Session[]
+  records     PersonalRecord[]
+  messages    Message[]        @relation("StudentMessages")
+}
+
+// ─────────────────────────────────────────────────────────────
+// BIBLIOTECA DE RUTINAS  (rutina → bloques → ejercicios)
+// ─────────────────────────────────────────────────────────────
+
+enum RoutineType {
+  FUERZA
+  METABOLICO
+  MOVILIDAD
+}
+
+model Routine {
+  id        String      @id @default(cuid())
+  coachId   String
+  coach     User        @relation("CoachRoutines", fields: [coachId], references: [id])
+  name      String // "Tren superior — Fuerza"
+  type      RoutineType
+  createdAt DateTime    @default(now())
+
+  blocks      Block[]
+  assignments Assignment[]
+  sessions    Session[]
+}
+
+model Block {
+  id          String  @id @default(cuid())
+  routineId   String
+  routine     Routine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  letter      String // "A", "B", "C", "D"
+  name        String // "Fuerza principal"
+  mode        String? // "Series rectas", "AMRAP 12:00", "Circuito · 2 vueltas"
+  estMinutes  Int     @default(0)
+  note        String? @db.Text // "Nota de Chino" para el alumno
+  orderIndex  Int
+
+  exercises Exercise[]
+}
+
+model Exercise {
+  id          String  @id @default(cuid())
+  blockId     String
+  block       Block   @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  name        String // "Press de banca"
+  sets        Int // series
+  reps        String // "8", "máx", "40 seg", "12 por lado" — texto a propósito
+  load        String? // "60 kg", "Banda", "—"
+  restSeconds Int     @default(0)
+  orderIndex  Int
+
+  setLogs SetLog[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// ASIGNACIÓN  (qué rutina va a qué alumno, qué día)
+// Reemplaza el objeto `semana` de los prototipos.
+// ─────────────────────────────────────────────────────────────
+
+model Assignment {
+  id        String         @id @default(cuid())
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  routineId String
+  routine   Routine        @relation(fields: [routineId], references: [id])
+  date      DateTime       @db.Date // el día concreto asignado
+
+  session Session?
+
+  @@unique([studentId, date]) // un alumno, una rutina por día
+  @@index([studentId, date])
+}
+
+// ─────────────────────────────────────────────────────────────
+// HISTORIAL  (se arma solo con lo que el alumno marca)
+// ─────────────────────────────────────────────────────────────
+
+enum Sensation {
+  FACIL
+  JUSTA
+  AL_LIMITE
+  NO_PUDE
+}
+
+enum SessionStatus {
+  SIN_HACER
+  A_MEDIAS
+  COMPLETO
+}
+
+model Session {
+  id              String         @id @default(cuid())
+  studentId       String
+  student         StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  routineId       String
+  routine         Routine        @relation(fields: [routineId], references: [id])
+  assignmentId    String?        @unique
+  assignment      Assignment?    @relation(fields: [assignmentId], references: [id])
+  date            DateTime       @db.Date
+  durationMinutes Int?
+  sensation       Sensation?
+  status          SessionStatus  @default(SIN_HACER)
+  blocksDone      Int            @default(0)
+  blocksTotal     Int            @default(0)
+  createdAt       DateTime       @default(now())
+
+  setLogs SetLog[]
+
+  @@index([studentId, date])
+}
+
+model SetLog {
+  id         String    @id @default(cuid())
+  sessionId  String
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exerciseId String
+  exercise   Exercise  @relation(fields: [exerciseId], references: [id])
+  setNumber  Int
+  completed  Boolean   @default(false)
+  loadUsed   String? // lo que el alumno realmente usó ese día
+  rpe        Sensation? // "cómo te salió" por serie
+
+  @@index([sessionId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// MARCAS  (progresión por ejercicio — la pantalla "Tus marcas")
+// ─────────────────────────────────────────────────────────────
+
+model PersonalRecord {
+  id           String         @id @default(cuid())
+  studentId    String
+  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  exerciseName String // "Press de banca"
+  value        String // "62,5 kg"
+  note         String? // "+7,5 kg en 4 semanas"
+  updatedAt    DateTime       @updatedAt
+
+  @@index([studentId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// CHAT  (coach ↔ alumno)
+// ─────────────────────────────────────────────────────────────
+
+model Message {
+  id         String         @id @default(cuid())
+  studentId  String // el hilo pertenece a un alumno
+  student    StudentProfile @relation("StudentMessages", fields: [studentId], references: [id], onDelete: Cascade)
+  senderId   String
+  sender     User           @relation("MessageSender", fields: [senderId], references: [id])
+  body       String         @db.Text
+  sentAt     DateTime       @default(now())
+  readAt     DateTime?
+
+  @@index([studentId, sentAt])
+}

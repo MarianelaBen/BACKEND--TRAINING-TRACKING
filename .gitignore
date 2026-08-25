@@ -1,0 +1,17 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+
+# entorno — NUNCA subir secrets
+.env
+.env.local
+.env.*.local
+
+# prisma
+prisma/*.db
+
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
