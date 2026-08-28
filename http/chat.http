@@ -1,0 +1,125 @@
+### Pruebas etapa 7 — chat (coach ↔ alumno)
+### Requiere: pnpm dev, seed cargado (mica@example.com tiene coachId asignado)
+### Usa la extensión "REST Client" (VSCode). Corré los bloques en orden.
+
+@baseUrl = http://localhost:3000
+
+### Nota importante: para probar el lado coach hace falta el StudentProfile.id
+### de Micaela (NO su User.id). Todavía no existe ningún endpoint que lo
+### devuelva (eso es la "lista de alumnos" de la etapa 5, que no está hecha).
+### Sacalo a mano con `npx prisma studio` o una consulta directa, y pegalo acá:
+@micaelaStudentProfileId = PEGAR_ACA_EL_ID_DE_STUDENTPROFILE
+
+
+### 1. Login alumna
+# @name loginAlumna
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mica@example.com",
+  "password": "chino1234"
+}
+
+
+### 2. Login coach
+# @name loginCoach
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "chino@entrenaconchino.com",
+  "password": "chino1234"
+}
+
+
+### 3. Login de otro alumno (Juan) — para probar el 403 de ownership más abajo
+# @name loginOtroAlumno
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "juan@example.com",
+  "password": "chino1234"
+}
+
+
+### 4. La alumna manda el primer mensaje del hilo → 201
+POST {{baseUrl}}/student/messages
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "body": "Hola Chino, ¿arrancamos con la rutina de esta semana?"
+}
+
+
+### 5. Antes de que el coach responda: la alumna no tiene nada pendiente
+### Esperado: { "count": 0 }
+GET {{baseUrl}}/student/messages/unread-count
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 6. El coach abre el hilo de Micaela → ve el mensaje, y le marca readAt
+### (antes estaba null porque el coach nunca lo había abierto)
+GET {{baseUrl}}/coach/students/{{micaelaStudentProfileId}}/messages
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 7. El coach responde → 201
+POST {{baseUrl}}/coach/students/{{micaelaStudentProfileId}}/messages
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "body": "Dale, arrancamos. Subimos un poco el peso en press de banca."
+}
+
+
+### 8. Ahora sí la alumna tiene 1 pendiente
+### Esperado: { "count": 1 }
+GET {{baseUrl}}/student/messages/unread-count
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 9. La alumna abre el hilo → ve los 2 mensajes, y el del coach queda con
+### readAt seteado (efecto de "ya lo leí")
+GET {{baseUrl}}/student/messages
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 10. Después de abrirlo, ya no queda nada pendiente
+### Esperado: { "count": 0 }
+GET {{baseUrl}}/student/messages/unread-count
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 11. Ownership: el coach intenta ver un alumno que no es suyo → 403
+### (usá el StudentProfile.id de Juan si lo tenés; si no, cualquier id que
+### exista pero no pertenezca a este coach sirve igual para el 403)
+GET {{baseUrl}}/coach/students/ID_DE_UN_ALUMNO_AJENO/messages
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 12. StudentProfile.id que no existe → 404
+GET {{baseUrl}}/coach/students/no-existe/messages
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 13. Rol equivocado: un alumno pegándole a /coach → 403
+GET {{baseUrl}}/coach/students/{{micaelaStudentProfileId}}/messages
+Authorization: Bearer {{loginOtroAlumno.response.body.token}}
+
+
+### 14. body vacío → 400
+POST {{baseUrl}}/student/messages
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "body": "   "
+}
+
+
+### 15. Sin token → 401
+GET {{baseUrl}}/student/messages

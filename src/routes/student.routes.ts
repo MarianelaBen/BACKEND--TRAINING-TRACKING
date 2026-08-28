@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
 import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/progress.js';
+import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import type { DiaDetalle, DiaSemana, SemanaAlumno } from '../types/index.js';
 
 declare global {
@@ -245,4 +246,43 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
     completo,
   };
   res.json(body);
+});
+
+const MAX_MENSAJE = 2000;
+
+// Hilo único con el coach asignado. Abrir el hilo marca como leídos los
+// mensajes del coach (efecto de "ya lo vi"); para el puntito de la tab bar
+// sin gastar ese efecto está /messages/unread-count más abajo.
+studentRouter.get('/messages', async (req, res) => {
+  const messages = await fetchThreadAndMarkRead(req.studentProfileId!, req.auth!.userId);
+  res.json(messages);
+});
+
+studentRouter.get('/messages/unread-count', async (req, res) => {
+  const count = await countUnread(req.studentProfileId!, req.auth!.userId);
+  res.json({ count });
+});
+
+studentRouter.post('/messages', async (req, res) => {
+  const { body } = req.body ?? {};
+  if (typeof body !== 'string' || body.trim().length === 0) {
+    res.status(400).json({ error: 'body es obligatorio' });
+    return;
+  }
+  if (body.length > MAX_MENSAJE) {
+    res.status(400).json({ error: `El mensaje es demasiado largo (máximo ${MAX_MENSAJE} caracteres)` });
+    return;
+  }
+
+  const profile = await prisma.studentProfile.findUnique({
+    where: { id: req.studentProfileId! },
+    select: { coachId: true },
+  });
+  if (!profile?.coachId) {
+    res.status(409).json({ error: 'Todavía no tenés un coach asignado' });
+    return;
+  }
+
+  const message = await sendMessage(req.studentProfileId!, req.auth!.userId, body.trim());
+  res.status(201).json(message);
 });
