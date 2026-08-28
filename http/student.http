@@ -1,0 +1,231 @@
+### Pruebas etapa 3 — endpoints de lectura vista alumno
+### Requiere: pnpm exec prisma migrate dev && pnpm seed && pnpm dev
+### Usa la extensión "REST Client" (VSCode) para correr cada bloque con "Send Request".
+### Corré los bloques en orden: los de /student dependen del token que capturan los de login.
+
+@baseUrl = http://localhost:3000
+
+### 0. Server arriba
+GET {{baseUrl}}/health
+
+
+### 1. Login alumna (seed: mica@example.com, tiene asignación al 2026-08-26)
+# @name loginAlumna
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mica@example.com",
+  "password": "chino1234"
+}
+
+
+### 2. Login coach (seed) — para probar el rechazo por rol más abajo
+# @name loginCoach
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "chino@entrenaconchino.com",
+  "password": "chino1234"
+}
+
+
+### 3. Semana actual de la alumna (sin ?start, default = lunes de esta semana)
+GET {{baseUrl}}/student/week
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 4. Semana que contiene la asignación del seed (26/08/2026 es miércoles)
+### Esperado: el 2026-08-26 aparece con esDescanso:false, completo:false
+### (todavía no se marcó ninguna serie)
+GET {{baseUrl}}/student/week?start=2026-08-24
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 5. Detalle del día con rutina asignada
+### Esperado: rutina "Tren superior — Fuerza", 2 bloques, todos los slots de
+### setsEstado con completed:false / loadUsed:null / rpe:null (nada marcado aún)
+# @name diaAsignado
+GET {{baseUrl}}/student/days/2026-08-26
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 6. Día sin asignación → día de descanso, 200 OK (no 404)
+GET {{baseUrl}}/student/days/2026-08-20
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 7. Rol equivocado: el coach pegándole a /student → 403
+GET {{baseUrl}}/student/week
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 8. Fecha inválida → 400 JSON, no HTML
+GET {{baseUrl}}/student/days/no-es-una-fecha
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 9. Sin token → 401
+GET {{baseUrl}}/student/week
+
+
+### 10. Normalización silenciosa de start no-lunes (2026-08-26 es miércoles)
+### Esperado: 200 OK con "start":"2026-08-24" (el lunes de esa semana),
+### y en la consola del server un console.warn avisando la normalización
+GET {{baseUrl}}/student/week?start=2026-08-26
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+##########################################################################
+### Pruebas etapa 4 — marcar series (PUT idempotente)
+### Requiere ADEMÁS: pnpm exec prisma migrate dev --name add_setlog_unique_set
+### (agrega el @@unique de SetLog — sin esto el PUT tira error de Postgres)
+### El exerciseId se toma solo de la respuesta de "diaAsignado" (bloque 4),
+### así que corré ese bloque antes de estos.
+##########################################################################
+
+### 11. Marcar la primera serie del primer ejercicio del bloque A
+### Esperado: 200, ese ejercicio queda con 1 serie completed:true, el resto
+### pendientes; bloquesCompletos sigue en 0 (bloque A tiene 2 ejercicios)
+# @name marcarSerie1
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true,
+  "loadUsed": "60 kg",
+  "rpe": "JUSTA"
+}
+
+
+### 12. Repetir la misma marca (mismo día/ejercicio/serie) → idempotente
+### Esperado: 200, respuesta idéntica a la anterior, no debería crear una
+### fila duplicada de SetLog (lo confirma que bloquesCompletos no cambie)
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true,
+  "loadUsed": "60 kg",
+  "rpe": "JUSTA"
+}
+
+
+### 13. Confirmar en el GET que se ve exactamente lo mismo que devolvió el PUT
+### (misma fuente de verdad: SetLog, recalculado en vivo)
+GET {{baseUrl}}/student/days/2026-08-26
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 14. completed:false → 400 (no se soporta desmarcar todavía)
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/2
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": false
+}
+
+
+### 15. rpe inválido → 400
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/2
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true,
+  "rpe": "MAS_O_MENOS"
+}
+
+
+### 16. setNumber fuera de rango → 400 (el primer ejercicio no tiene 99 series)
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/99
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true
+}
+
+
+### 17. exerciseId que no pertenece a la rutina de ese día → 404
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/no-existe/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true
+}
+
+
+### 18. Día sin asignación → 404 (no se puede marcar una serie de un entrenamiento
+### que no existe, a diferencia del GET que devuelve 200 con esDescanso:true)
+PUT {{baseUrl}}/student/days/2026-08-20/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true
+}
+
+
+### 19. Marcar las series que faltan del bloque A entero. En el seed, el
+### bloque A tiene 2 ejercicios de 4 series cada uno (Press de banca, Remo con
+### barra); la serie 1 de Press de banca ya quedó marcada en el paso 11.
+### Faltan: Press de banca 2,3,4 y Remo con barra 1,2,3,4 (7 PUT).
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/2
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "60 kg", "rpe": "JUSTA" }
+
+###
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/3
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "62.5 kg", "rpe": "JUSTA" }
+
+###
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/4
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "62.5 kg", "rpe": "AL_LIMITE" }
+
+###
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[1].id}}/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "50 kg", "rpe": "JUSTA" }
+
+###
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[1].id}}/sets/2
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "50 kg", "rpe": "JUSTA" }
+
+###
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[1].id}}/sets/3
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "50 kg", "rpe": "JUSTA" }
+
+###
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[1].id}}/sets/4
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{ "completed": true, "loadUsed": "50 kg", "rpe": "AL_LIMITE" }
+
+
+### 20. Confirmar: bloque A completo, bloquesCompletos:1, día no completo
+### todavía (falta el bloque B)
+GET {{baseUrl}}/student/days/2026-08-26
+Authorization: Bearer {{loginAlumna.response.body.token}}

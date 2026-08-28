@@ -109,3 +109,69 @@ export interface Mensaje {
   sentAt: string;
   readAt: string | null;
 }
+
+// ── Vista alumno: rutina del día / semana (etapa 3) ──────────────────
+// Formas de respuesta compuestas, ajustadas a lo que realmente consumen
+// las pantallas de app-alumno_1.html (semana(), vHoy(), vRutina(), vEjercicio()).
+// No son un espejo 1:1 de los modelos de Prisma: por ejemplo no llevan
+// orderIndex (el array ya viene ordenado) ni mode/subtítulos que no tienen
+// dato real detrás.
+
+export interface RutinaResumen {
+  id: string;
+  name: string;
+  type: TipoRutina;
+}
+
+export interface EstadoSet {
+  setNumber: number;
+  completed: boolean;
+  loadUsed: string | null;
+  rpe: Sensacion | null;
+}
+
+export interface EjercicioDia {
+  id: string;
+  name: string;
+  sets: number;
+  reps: string;
+  load: string | null;
+  restSeconds: number;
+  completo: boolean;
+  setsEstado: EstadoSet[];
+}
+
+export interface BloqueDia {
+  id: string;
+  letter: string;
+  name: string;
+  mode: string | null;
+  estMinutes: number;
+  note: string | null;
+  completo: boolean;
+  exercises: EjercicioDia[];
+}
+
+export interface DiaSemana {
+  date: string;
+  esDescanso: boolean;
+  completo: boolean;
+}
+
+export interface SemanaAlumno {
+  start: string;
+  end: string;
+  days: DiaSemana[];
+}
+
+export interface DiaDetalle {
+  date: string;
+  esDescanso: boolean;
+  esHoy: boolean;
+  empezado: boolean;
+  rutina: RutinaResumen | null;
+  bloques: BloqueDia[];
+  bloquesCompletos: number;
+  bloquesTotal: number;
+  completo: boolean;
+}

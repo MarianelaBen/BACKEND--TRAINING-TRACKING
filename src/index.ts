@@ -1,7 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import type { NextFunction, Request, Response } from 'express';
 import { authRouter } from './routes/auth.routes.js';
+import { studentRouter } from './routes/student.routes.js';
 
 const app = express();
 app.use(express.json());
@@ -12,6 +14,14 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/auth', authRouter);
+app.use('/student', studentRouter);
+
+// Sin esto, un error no controlado cae en el handler default de Express y
+// devuelve HTML en vez de JSON, rompiendo el contrato de la API.
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error(err);
+  res.status(500).json({ error: 'Error interno' });
+});
 
 const port = Number(process.env.PORT) || 3000;
 app.listen(port, () => {

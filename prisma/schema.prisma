@@ -173,6 +173,7 @@ model SetLog {
   loadUsed   String? // lo que el alumno realmente usó ese día
   rpe        Sensation? // "cómo te salió" por serie
 
+  @@unique([sessionId, exerciseId, setNumber])
   @@index([sessionId])
 }
 
