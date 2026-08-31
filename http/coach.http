@@ -1,0 +1,227 @@
+### Pruebas etapas 5 y 6 — panel del coach (alumnos, ficha, adherencia,
+### CRUD de rutinas, asignación de rutina a alumno por día)
+### Requiere: pnpm exec prisma migrate deploy && pnpm seed && pnpm dev
+### Usa la extensión "REST Client" (VSCode). Corré los bloques en orden.
+
+@baseUrl = http://localhost:3000
+
+### 1. Login coach
+# @name loginCoach
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "chino@entrenaconchino.com",
+  "password": "chino1234"
+}
+
+
+### 2. Login alumna (para probar los 403 de rol más abajo)
+# @name loginAlumna
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mica@example.com",
+  "password": "chino1234"
+}
+
+
+##########################################################################
+### Alumnos
+##########################################################################
+
+### 3. Lista de alumnos del coach (seed: Micaela y Juan)
+# @name listaAlumnos
+GET {{baseUrl}}/coach/students
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 4. Ficha de Micaela (usa el id que devolvió la lista de arriba)
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 5. Alumno inexistente → 404
+GET {{baseUrl}}/coach/students/no-existe
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 6. Rol equivocado: la alumna pegándole a /coach → 403
+GET {{baseUrl}}/coach/students
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 7. Adherencia de Micaela, últimos 28 días (default)
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/adherence
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 8. Adherencia con rango explícito
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/adherence?start=2026-08-01&end=2026-08-31
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 9. start posterior a end → 400
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/adherence?start=2026-08-31&end=2026-08-01
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+##########################################################################
+### Rutinas (biblioteca del coach)
+##########################################################################
+
+### 10. Crear una rutina nueva con bloques y ejercicios anidados
+# @name crearRutina
+POST {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Piernas — Fuerza",
+  "type": "FUERZA",
+  "blocks": [
+    {
+      "letter": "A",
+      "name": "Principal",
+      "mode": "Series rectas",
+      "estMinutes": 20,
+      "note": "Dale, entrada en calor y a subir el peso de a poco.",
+      "exercises": [
+        { "name": "Sentadilla", "sets": 4, "reps": "6", "load": "80 kg", "restSeconds": 120 },
+        { "name": "Peso muerto rumano", "sets": 3, "reps": "10", "load": "50 kg" }
+      ]
+    }
+  ]
+}
+
+
+### 11. Body inválido: sin bloques → 400
+POST {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Rutina vacía",
+  "type": "FUERZA",
+  "blocks": []
+}
+
+
+### 12. type inválido → 400
+POST {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Rutina rara",
+  "type": "CARDIO",
+  "blocks": [{ "letter": "A", "name": "X", "exercises": [{ "name": "Y", "sets": 1, "reps": "1" }] }]
+}
+
+
+### 13. Listado de rutinas del coach
+GET {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 14. Detalle de la rutina creada
+GET {{baseUrl}}/coach/routines/{{crearRutina.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 15. Editar sólo el nombre
+PATCH {{baseUrl}}/coach/routines/{{crearRutina.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Piernas — Fuerza (v2)"
+}
+
+
+### 16. PATCH sin campos → 400
+PATCH {{baseUrl}}/coach/routines/{{crearRutina.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{}
+
+
+### 17. Borrar la rutina de prueba (todavía sin asignar) → 204
+DELETE {{baseUrl}}/coach/routines/{{crearRutina.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 18. Rutina ajena/inexistente → 404
+GET {{baseUrl}}/coach/routines/no-existe
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+##########################################################################
+### Asignación de rutina a alumno por día
+##########################################################################
+
+### 19. Rutina de referencia: la del seed ("Tren superior — Fuerza")
+# @name listaRutinas
+GET {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 20. Asignar esa rutina a Micaela para el 2026-09-02 → 201
+# @name asignar
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "routineId": "{{listaRutinas.response.body.$[0].id}}",
+  "date": "2026-09-02"
+}
+
+
+### 21. Reasignar el mismo día (sin sesión iniciada) → 200, no 201
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "routineId": "{{listaRutinas.response.body.$[0].id}}",
+  "date": "2026-09-02"
+}
+
+
+### 22. Ver la semana asignada (incluye el 2026-09-02)
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments?start=2026-09-01
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 23. routineId de otro coach o inexistente → 404
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "routineId": "no-existe",
+  "date": "2026-09-03"
+}
+
+
+### 24. Desasignar el 2026-09-02 (sin sesión iniciada) → 204
+DELETE {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-02
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 25. Desasignar un día sin asignación → 404
+DELETE {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-02
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+##########################################################################
+### 26-27. Guard de integridad: una vez que el alumno marcó una serie ese
+### día, ni reasignar ni desasignar están permitidos (409). Para probarlo:
+### 1) Asigná una rutina a una fecha nueva (bloque 20, cambiando la fecha)
+### 2) Como alumna, marcá una serie ese día con
+###    PUT /student/days/:date/exercises/:exerciseId/sets/1 (ver http/student.http)
+### 3) Repetí los bloques 20 (reasignar) y 24 (desasignar) sobre esa fecha:
+###    ambos deberían devolver 409 en vez de 200/204.

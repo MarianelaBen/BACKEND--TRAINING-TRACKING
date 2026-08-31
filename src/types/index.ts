@@ -64,7 +64,7 @@ export interface Asignacion {
   studentId: string;
   routineId: string;
   date: string;
-  routine?: Rutina;
+  routine?: RutinaResumen;
 }
 
 export interface SetLog {
@@ -174,4 +174,57 @@ export interface DiaDetalle {
   bloquesCompletos: number;
   bloquesTotal: number;
   completo: boolean;
+}
+
+// ── Vista coach: alumnos, rutinas, adherencia, asignación (etapas 5 y 6) ─
+
+export interface AlumnoResumen {
+  id: string;
+  userId: string;
+  name: string;
+  initials: string | null;
+  plan: string | null;
+  planActive: boolean;
+  nextPayment: string | null;
+  unreadCount: number;
+}
+
+export interface AlumnoFicha {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  initials: string | null;
+  plan: string | null;
+  planStartDate: string | null;
+  planActive: boolean;
+  nextPayment: string | null;
+  records: Marca[];
+}
+
+export interface DiaAdherencia {
+  date: string;
+  completo: boolean;
+}
+
+export interface Adherencia {
+  start: string;
+  end: string;
+  asignados: number;
+  completados: number;
+  pct: number | null;
+  days: DiaAdherencia[];
+}
+
+export interface RutinaListado {
+  id: string;
+  name: string;
+  type: TipoRutina;
+  createdAt: string;
+}
+
+export interface DiaAsignacionCoach {
+  date: string;
+  esDescanso: boolean;
+  routine: RutinaResumen | null;
 }

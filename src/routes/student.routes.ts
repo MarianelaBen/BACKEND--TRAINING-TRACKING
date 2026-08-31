@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
 import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/progress.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
+import { routineWithBlocksInclude } from '../lib/routines.js';
 import type { DiaDetalle, DiaSemana, SemanaAlumno } from '../types/index.js';
 
 declare global {
@@ -22,14 +23,7 @@ export const studentRouter = Router();
 // Session.blocksDone/blocksTotal/status (esos los escribe el PUT de marcar
 // series, más abajo, y son sólo una caché para lecturas agregadas futuras
 // del lado coach — nunca la fuente de verdad).
-const rutinaConBloques = {
-  blocks: {
-    orderBy: { orderIndex: 'asc' as const },
-    include: {
-      exercises: { orderBy: { orderIndex: 'asc' as const } },
-    },
-  },
-};
+const rutinaConBloques = routineWithBlocksInclude;
 
 studentRouter.use(requireAuth, requireRole('STUDENT'), async (req, res, next) => {
   const profile = await prisma.studentProfile.findUnique({
