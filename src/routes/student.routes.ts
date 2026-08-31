@@ -116,6 +116,8 @@ studentRouter.get('/days/:date', async (req, res) => {
       bloquesCompletos: 0,
       bloquesTotal: 0,
       completo: false,
+      durationMinutes: null,
+      sensation: null,
     };
     res.json(body);
     return;
@@ -134,6 +136,8 @@ studentRouter.get('/days/:date', async (req, res) => {
     bloquesCompletos,
     bloquesTotal,
     completo,
+    durationMinutes: assignment.session?.durationMinutes ?? null,
+    sensation: assignment.session?.sensation ?? null,
   };
   res.json(body);
 });
@@ -198,7 +202,7 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
   const loadUsedFinal: string | null = loadUsed ?? null;
   const rpeFinal: Sensacion | null = rpe ?? null;
 
-  const { bloques, bloquesCompletos, bloquesTotal, completo } = await prisma.$transaction(async (tx) => {
+  const { bloques, bloquesCompletos, bloquesTotal, completo, durationMinutes, sensation } = await prisma.$transaction(async (tx) => {
     const session = await tx.session.upsert({
       where: { assignmentId: assignment.id },
       create: { studentId, routineId: assignment.routineId, assignmentId: assignment.id, date: assignment.date },
@@ -224,7 +228,7 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
       },
     });
 
-    return { bloques, ...resumen };
+    return { bloques, ...resumen, durationMinutes: session.durationMinutes, sensation: session.sensation };
   });
 
   const dateStr = toDateString(date);
@@ -238,6 +242,85 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
     bloquesCompletos,
     bloquesTotal,
     completo,
+    durationMinutes,
+    sensation,
+  };
+  res.json(body);
+});
+
+// Cierra el entrenamiento del día con duración/sensación. No toca bloques ni
+// status (eso lo calcula sólo el PUT de arriba, a partir de SetLog); requiere
+// que ya exista una Session, es decir que el alumno haya marcado al menos una
+// serie (mismo criterio que computeEmpezado).
+studentRouter.put('/days/:date/finish', async (req, res) => {
+  const studentId = req.studentProfileId!;
+
+  const date = parseDateParam(req.params.date);
+  if (!date) {
+    res.status(400).json({ error: 'date tiene que tener el formato YYYY-MM-DD' });
+    return;
+  }
+
+  const { durationMinutes, sensation } = req.body ?? {};
+  const data: { durationMinutes?: number; sensation?: Sensacion } = {};
+
+  if (durationMinutes !== undefined) {
+    if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) {
+      res.status(400).json({ error: 'durationMinutes tiene que ser un entero positivo' });
+      return;
+    }
+    data.durationMinutes = durationMinutes;
+  }
+  if (sensation !== undefined) {
+    if (typeof sensation !== 'string' || !SENSACIONES.includes(sensation as Sensacion)) {
+      res.status(400).json({ error: 'sensation inválida' });
+      return;
+    }
+    data.sensation = sensation as Sensacion;
+  }
+  if (Object.keys(data).length === 0) {
+    res.status(400).json({ error: 'Mandá al menos durationMinutes o sensation' });
+    return;
+  }
+
+  const assignment = await prisma.assignment.findUnique({
+    where: { studentId_date: { studentId, date } },
+    include: {
+      routine: { include: rutinaConBloques },
+      session: { include: { setLogs: true } },
+    },
+  });
+  if (!assignment) {
+    res.status(404).json({ error: 'No tenés una rutina asignada este día' });
+    return;
+  }
+  if (!assignment.session) {
+    res.status(404).json({ error: 'Todavía no marcaste ninguna serie este día' });
+    return;
+  }
+
+  const session = await prisma.session.update({
+    where: { id: assignment.session.id },
+    data,
+    include: { setLogs: true },
+  });
+
+  const bloques = computeBloquesDia(assignment.routine, session);
+  const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
+  const dateStr = toDateString(date);
+
+  const body: DiaDetalle = {
+    date: dateStr,
+    esDescanso: false,
+    esHoy: dateStr === todayInGymTZ(),
+    empezado: true,
+    rutina: { id: assignment.routine.id, name: assignment.routine.name, type: assignment.routine.type },
+    bloques,
+    bloquesCompletos,
+    bloquesTotal,
+    completo,
+    durationMinutes: session.durationMinutes,
+    sensation: session.sensation,
   };
   res.json(body);
 });

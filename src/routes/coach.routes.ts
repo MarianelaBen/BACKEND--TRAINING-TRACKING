@@ -4,7 +4,8 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
-import { routineWithBlocksInclude, toRutina, toRutinaResumen } from '../lib/routines.js';
+import type { RoutineBlockCreate } from '../lib/routines.js';
+import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
 import type {
   AlumnoFicha,
@@ -64,6 +65,17 @@ async function resolveOwnedRoutine(
     return null;
   }
   return routine;
+}
+
+// El ownership del alumno ya lo garantizó resolveOwnedStudent; acá sólo hace
+// falta confirmar que la marca sea de ese alumno.
+async function resolveOwnedRecord(res: Response, studentId: string, recordId: string): Promise<{ id: string } | null> {
+  const record = await prisma.personalRecord.findUnique({ where: { id: recordId }, select: { id: true, studentId: true } });
+  if (!record || record.studentId !== studentId) {
+    res.status(404).json({ error: 'Marca no encontrada' });
+    return null;
+  }
+  return record;
 }
 
 function toMarca(record: { id: string; studentId: string; exerciseName: string; value: string; note: string | null; updatedAt: Date }): Marca {
@@ -128,6 +140,84 @@ coachRouter.get('/students/:studentId', async (req, res) => {
     records: profile!.records.map(toMarca),
   };
   res.json(body);
+});
+
+// Marcas: las carga el coach a mano (no se recalculan solas a partir de las
+// sesiones). Una por exerciseName por alumno: POST no pisa una existente
+// (409, usá PATCH), así "marca" es siempre el valor vigente de ese ejercicio,
+// no un historial de intentos.
+coachRouter.post('/students/:studentId/records', async (req, res) => {
+  const student = await resolveOwnedStudent(req, res);
+  if (!student) return;
+
+  const { exerciseName, value, note } = req.body ?? {};
+  if (typeof exerciseName !== 'string' || exerciseName.trim().length === 0) {
+    res.status(400).json({ error: 'exerciseName es obligatorio' });
+    return;
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    res.status(400).json({ error: 'value es obligatorio' });
+    return;
+  }
+  if (note !== undefined && note !== null && typeof note !== 'string') {
+    res.status(400).json({ error: 'note inválido' });
+    return;
+  }
+
+  const existing = await prisma.personalRecord.findFirst({
+    where: { studentId: student.id, exerciseName: exerciseName.trim() },
+  });
+  if (existing) {
+    res.status(409).json({ error: 'Ya existe una marca para ese ejercicio, usá PATCH para actualizarla' });
+    return;
+  }
+
+  const record = await prisma.personalRecord.create({
+    data: { studentId: student.id, exerciseName: exerciseName.trim(), value: value.trim(), note: note ?? null },
+  });
+  res.status(201).json(toMarca(record));
+});
+
+coachRouter.patch('/students/:studentId/records/:recordId', async (req, res) => {
+  const student = await resolveOwnedStudent(req, res);
+  if (!student) return;
+  const record = await resolveOwnedRecord(res, student.id, req.params.recordId);
+  if (!record) return;
+
+  const { value, note } = req.body ?? {};
+  const data: { value?: string; note?: string | null } = {};
+
+  if (value !== undefined) {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      res.status(400).json({ error: 'value inválido' });
+      return;
+    }
+    data.value = value.trim();
+  }
+  if (note !== undefined) {
+    if (note !== null && typeof note !== 'string') {
+      res.status(400).json({ error: 'note inválido' });
+      return;
+    }
+    data.note = note;
+  }
+  if (Object.keys(data).length === 0) {
+    res.status(400).json({ error: 'Mandá al menos value o note para actualizar' });
+    return;
+  }
+
+  const updated = await prisma.personalRecord.update({ where: { id: record.id }, data });
+  res.json(toMarca(updated));
+});
+
+coachRouter.delete('/students/:studentId/records/:recordId', async (req, res) => {
+  const student = await resolveOwnedStudent(req, res);
+  if (!student) return;
+  const record = await resolveOwnedRecord(res, student.id, req.params.recordId);
+  if (!record) return;
+
+  await prisma.personalRecord.delete({ where: { id: record.id } });
+  res.status(204).end();
 });
 
 // Adherencia = % de días asignados en el rango que el alumno completó.
@@ -230,110 +320,29 @@ coachRouter.post('/routines', async (req, res) => {
     res.status(400).json({ error: `type tiene que ser uno de: ${TIPOS_RUTINA.join(', ')}` });
     return;
   }
-  if (!Array.isArray(blocks) || blocks.length === 0) {
-    res.status(400).json({ error: 'blocks tiene que ser un array con al menos un bloque' });
+  const validated = validateBlocksInput(blocks);
+  if ('error' in validated) {
+    res.status(400).json({ error: validated.error });
     return;
   }
 
-  const blocksData: Array<{
-    letter: string;
-    name: string;
-    mode: string | null;
-    estMinutes: number;
-    note: string | null;
-    orderIndex: number;
-    exercises: {
-      create: Array<{ name: string; sets: number; reps: string; load: string | null; restSeconds: number; orderIndex: number }>;
-    };
-  }> = [];
-
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (typeof block?.letter !== 'string' || block.letter.trim().length === 0) {
-      res.status(400).json({ error: `blocks[${i}].letter es obligatorio` });
-      return;
-    }
-    if (typeof block?.name !== 'string' || block.name.trim().length === 0) {
-      res.status(400).json({ error: `blocks[${i}].name es obligatorio` });
-      return;
-    }
-    if (block.mode !== undefined && block.mode !== null && typeof block.mode !== 'string') {
-      res.status(400).json({ error: `blocks[${i}].mode inválido` });
-      return;
-    }
-    if (block.estMinutes !== undefined && (!Number.isInteger(block.estMinutes) || block.estMinutes < 0)) {
-      res.status(400).json({ error: `blocks[${i}].estMinutes tiene que ser un entero no negativo` });
-      return;
-    }
-    if (block.note !== undefined && block.note !== null && typeof block.note !== 'string') {
-      res.status(400).json({ error: `blocks[${i}].note inválido` });
-      return;
-    }
-    if (!Array.isArray(block.exercises) || block.exercises.length === 0) {
-      res.status(400).json({ error: `blocks[${i}].exercises tiene que ser un array con al menos un ejercicio` });
-      return;
-    }
-
-    const exercisesData: Array<{ name: string; sets: number; reps: string; load: string | null; restSeconds: number; orderIndex: number }> = [];
-    for (let j = 0; j < block.exercises.length; j++) {
-      const exercise = block.exercises[j];
-      if (typeof exercise?.name !== 'string' || exercise.name.trim().length === 0) {
-        res.status(400).json({ error: `blocks[${i}].exercises[${j}].name es obligatorio` });
-        return;
-      }
-      if (!Number.isInteger(exercise.sets) || exercise.sets <= 0) {
-        res.status(400).json({ error: `blocks[${i}].exercises[${j}].sets tiene que ser un entero positivo` });
-        return;
-      }
-      if (typeof exercise.reps !== 'string' || exercise.reps.trim().length === 0) {
-        res.status(400).json({ error: `blocks[${i}].exercises[${j}].reps es obligatorio` });
-        return;
-      }
-      if (exercise.load !== undefined && exercise.load !== null && typeof exercise.load !== 'string') {
-        res.status(400).json({ error: `blocks[${i}].exercises[${j}].load inválido` });
-        return;
-      }
-      if (exercise.restSeconds !== undefined && (!Number.isInteger(exercise.restSeconds) || exercise.restSeconds < 0)) {
-        res.status(400).json({ error: `blocks[${i}].exercises[${j}].restSeconds tiene que ser un entero no negativo` });
-        return;
-      }
-      exercisesData.push({
-        name: exercise.name,
-        sets: exercise.sets,
-        reps: exercise.reps,
-        load: exercise.load ?? null,
-        restSeconds: exercise.restSeconds ?? 0,
-        orderIndex: j,
-      });
-    }
-
-    blocksData.push({
-      letter: block.letter,
-      name: block.name,
-      mode: block.mode ?? null,
-      estMinutes: block.estMinutes ?? 0,
-      note: block.note ?? null,
-      orderIndex: i,
-      exercises: { create: exercisesData },
-    });
-  }
-
   const routine = await prisma.routine.create({
-    data: { coachId: req.auth!.userId, name: name.trim(), type: type as TipoRutina, blocks: { create: blocksData } },
+    data: { coachId: req.auth!.userId, name: name.trim(), type: type as TipoRutina, blocks: { create: validated.blocks } },
     include: routineWithBlocksInclude,
   });
 
   res.status(201).json(toRutina(routine));
 });
 
-// Sólo metadata (name/type). Editar bloques/ejercicios de una rutina existente
-// (agregar, borrar, reordenar) queda fuera de esta etapa: toca sesiones/SetLog
-// históricos y merece su propio diseño.
+// name/type se pueden editar siempre. blocks (reemplazo completo de la
+// estructura) sólo si la rutina todavía no tiene ninguna asignación ni
+// sesión — mismo guard que el DELETE de más abajo; si ya está en uso, hay
+// que crear una rutina nueva en vez de editar la vieja.
 coachRouter.patch('/routines/:routineId', async (req, res) => {
   const owned = await resolveOwnedRoutine(req, res, req.params.routineId);
   if (!owned) return;
 
-  const { name, type } = req.body ?? {};
+  const { name, type, blocks } = req.body ?? {};
   const data: { name?: string; type?: TipoRutina } = {};
 
   if (name !== undefined) {
@@ -350,12 +359,40 @@ coachRouter.patch('/routines/:routineId', async (req, res) => {
     }
     data.type = type as TipoRutina;
   }
-  if (Object.keys(data).length === 0) {
-    res.status(400).json({ error: 'Mandá al menos name o type para actualizar' });
+
+  let blocksData: RoutineBlockCreate[] | undefined;
+  if (blocks !== undefined) {
+    const [assignmentCount, sessionCount] = await Promise.all([
+      prisma.assignment.count({ where: { routineId: owned.id } }),
+      prisma.session.count({ where: { routineId: owned.id } }),
+    ]);
+    if (assignmentCount > 0 || sessionCount > 0) {
+      res.status(409).json({ error: 'No se puede editar la estructura: la rutina ya tiene asignaciones o sesiones asociadas. Creá una rutina nueva.' });
+      return;
+    }
+    const validated = validateBlocksInput(blocks);
+    if ('error' in validated) {
+      res.status(400).json({ error: validated.error });
+      return;
+    }
+    blocksData = validated.blocks;
+  }
+
+  if (Object.keys(data).length === 0 && !blocksData) {
+    res.status(400).json({ error: 'Mandá al menos name, type o blocks para actualizar' });
     return;
   }
 
-  const routine = await prisma.routine.update({ where: { id: owned.id }, data, include: routineWithBlocksInclude });
+  let routine;
+  if (blocksData) {
+    const [, updated] = await prisma.$transaction([
+      prisma.block.deleteMany({ where: { routineId: owned.id } }),
+      prisma.routine.update({ where: { id: owned.id }, data: { ...data, blocks: { create: blocksData } }, include: routineWithBlocksInclude }),
+    ]);
+    routine = updated;
+  } else {
+    routine = await prisma.routine.update({ where: { id: owned.id }, data, include: routineWithBlocksInclude });
+  }
   res.json(toRutina(routine));
 });
 

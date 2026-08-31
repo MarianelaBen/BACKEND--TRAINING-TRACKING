@@ -225,3 +225,147 @@ Authorization: Bearer {{loginCoach.response.body.token}}
 ###    PUT /student/days/:date/exercises/:exerciseId/sets/1 (ver http/student.http)
 ### 3) Repetí los bloques 20 (reasignar) y 24 (desasignar) sobre esa fecha:
 ###    ambos deberían devolver 409 en vez de 200/204.
+
+
+##########################################################################
+### Marcas del alumno (POST/PATCH/DELETE /coach/students/:id/records)
+##########################################################################
+
+### 28. Cargar una marca nueva para Micaela → 201
+# @name crearMarca
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/records
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "exerciseName": "Sentadilla",
+  "value": "90 kg",
+  "note": "+10 kg en 6 semanas"
+}
+
+
+### 29. Repetir el mismo exerciseName → 409 (usar PATCH)
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/records
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "exerciseName": "Sentadilla",
+  "value": "92,5 kg"
+}
+
+
+### 30. Ficha: ahora debería incluir la marca nueva junto con la del seed
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 31. Actualizar el valor de la marca
+PATCH {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/records/{{crearMarca.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "value": "95 kg",
+  "note": "+15 kg en 8 semanas"
+}
+
+
+### 32. PATCH sin campos → 400
+PATCH {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/records/{{crearMarca.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{}
+
+
+### 33. Marca de otro alumno / inexistente → 404
+PATCH {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/records/no-existe
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "value": "1 kg"
+}
+
+
+### 34. Borrar la marca de prueba → 204
+DELETE {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/records/{{crearMarca.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+##########################################################################
+### Editar estructura de una rutina (PATCH /coach/routines/:id con blocks)
+##########################################################################
+
+### 35. Crear una rutina de prueba (sin asignar todavía)
+# @name rutinaParaEditar
+POST {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Full body — prueba",
+  "type": "FUERZA",
+  "blocks": [
+    { "letter": "A", "name": "Bloque viejo", "exercises": [{ "name": "Sentadilla", "sets": 3, "reps": "10" }] }
+  ]
+}
+
+
+### 36. Reemplazar su estructura (todavía sin uso) → 200, bloques nuevos
+PATCH {{baseUrl}}/coach/routines/{{rutinaParaEditar.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "blocks": [
+    { "letter": "A", "name": "Bloque nuevo", "exercises": [
+      { "name": "Peso muerto", "sets": 4, "reps": "5", "load": "100 kg" },
+      { "name": "Zancadas", "sets": 3, "reps": "12 por lado" }
+    ]}
+  ]
+}
+
+
+### 37. Asignarla a Micaela para poder probar el guard de "en uso"
+# @name asignarParaGuard
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "routineId": "{{rutinaParaEditar.response.body.id}}",
+  "date": "2026-09-10"
+}
+
+
+### 38. Ahora que está asignada, editar blocks → 409 (creá una rutina nueva)
+PATCH {{baseUrl}}/coach/routines/{{rutinaParaEditar.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "blocks": [
+    { "letter": "A", "name": "Otra vez", "exercises": [{ "name": "X", "sets": 1, "reps": "1" }] }
+  ]
+}
+
+
+### 39. Pero renombrarla (sin tocar blocks) sigue andando aunque esté en uso
+PATCH {{baseUrl}}/coach/routines/{{rutinaParaEditar.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Full body — prueba (asignada)"
+}
+
+
+### 40. Limpieza: desasignar el 2026-09-10 y borrar la rutina de prueba
+DELETE {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-10
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+###
+DELETE {{baseUrl}}/coach/routines/{{rutinaParaEditar.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}

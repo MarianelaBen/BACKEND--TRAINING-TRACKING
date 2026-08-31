@@ -174,6 +174,8 @@ export interface DiaDetalle {
   bloquesCompletos: number;
   bloquesTotal: number;
   completo: boolean;
+  durationMinutes: number | null;
+  sensation: Sensacion | null;
 }
 
 // ── Vista coach: alumnos, rutinas, adherencia, asignación (etapas 5 y 6) ─

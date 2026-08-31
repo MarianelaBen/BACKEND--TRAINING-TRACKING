@@ -229,3 +229,54 @@ Content-Type: application/json
 ### todavía (falta el bloque B)
 GET {{baseUrl}}/student/days/2026-08-26
 Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+##########################################################################
+### Pruebas: cerrar sesión (PUT /days/:date/finish)
+### Requiere haber corrido al menos el bloque 11 (una serie marcada ese día,
+### para que exista una Session).
+##########################################################################
+
+### 21. Cerrar el entrenamiento con duración y sensación → 200, la respuesta
+### trae durationMinutes/sensation seteados
+PUT {{baseUrl}}/student/days/2026-08-26/finish
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "durationMinutes": 52,
+  "sensation": "JUSTA"
+}
+
+
+### 22. Confirmar en el GET que quedó guardado
+GET {{baseUrl}}/student/days/2026-08-26
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 23. Body vacío → 400
+PUT {{baseUrl}}/student/days/2026-08-26/finish
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{}
+
+
+### 24. sensation inválida → 400
+PUT {{baseUrl}}/student/days/2026-08-26/finish
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "sensation": "MAS_O_MENOS"
+}
+
+
+### 25. Día sin ninguna serie marcada → 404 (no hay Session todavía)
+PUT {{baseUrl}}/student/days/2026-08-20/finish
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "durationMinutes": 10
+}
