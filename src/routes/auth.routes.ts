@@ -33,13 +33,23 @@ authRouter.post('/register', async (req, res) => {
   }
 
   const passwordHash = await hashPassword(password);
+
+  // Sistema de un solo coach: todo alumno que se registra queda asignado al
+  // único coach que exista. Sin esto el alumno quedaría con coachId null y
+  // no podría ver ninguna rutina (student.routes.ts lo rechaza).
+  let studentCoachId: string | null = null;
+  if (role === 'STUDENT') {
+    const coach = await prisma.user.findFirst({ where: { role: 'COACH' } });
+    studentCoachId = coach?.id ?? null;
+  }
+
   const user = await prisma.user.create({
     data: {
       email,
       passwordHash,
       name,
       role: role as Rol,
-      ...(role === 'STUDENT' ? { studentProfile: { create: {} } } : {}),
+      ...(role === 'STUDENT' ? { studentProfile: { create: { coachId: studentCoachId } } } : {}),
     },
   });
 
