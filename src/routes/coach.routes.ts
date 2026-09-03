@@ -7,13 +7,16 @@ import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '.
 import type { RoutineBlockCreate } from '../lib/routines.js';
 import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
+import type { AssignmentForAdherence } from '../lib/adherence.js';
 import type {
   AlumnoFicha,
   AlumnoResumen,
   Asignacion,
   DiaAsignacionCoach,
+  EstadoSesion,
   Marca,
   RutinaListado,
+  Sensacion,
   TipoRutina,
 } from '../types/index.js';
 
@@ -262,17 +265,36 @@ coachRouter.get('/students/:studentId/adherence', async (req, res) => {
     return;
   }
 
-  const assignments = await prisma.assignment.findMany({
+  const rows = await prisma.assignment.findMany({
     where: {
       studentId: student.id,
       date: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${end}T00:00:00.000Z`) },
     },
-    include: {
-      routine: { include: routineWithBlocksInclude },
-      session: { include: { setLogs: true } },
+    select: {
+      date: true,
+      routine: {
+        select: { name: true, type: true, _count: { select: { blocks: true } } },
+      },
+      session: {
+        select: { blocksDone: true, blocksTotal: true, status: true, durationMinutes: true, sensation: true },
+      },
     },
     orderBy: { date: 'asc' },
   });
+
+  const assignments: AssignmentForAdherence[] = rows.map((r) => ({
+    date: r.date,
+    routine: { name: r.routine.name, type: r.routine.type as TipoRutina, blocksTotal: r.routine._count.blocks },
+    session: r.session
+      ? {
+          blocksDone: r.session.blocksDone,
+          blocksTotal: r.session.blocksTotal,
+          status: r.session.status as EstadoSesion,
+          durationMinutes: r.session.durationMinutes,
+          sensation: r.session.sensation as Sensacion | null,
+        }
+      : null,
+  }));
 
   res.json(computeAdherence(assignments, start, end));
 });

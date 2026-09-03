@@ -1,61 +1,38 @@
 // Adherencia = qué porcentaje de los días asignados en un rango el alumno
-// completó. Puro (sin Prisma): reusa la misma noción de "día completo" que
-// GET /student/week (computeBloquesDia + summarizeBloques de lib/progress.ts),
-// para no reimplementar esa lógica del lado coach.
+// completó.
+//
+// A diferencia de GET /student/week (que necesita el árbol completo de
+// bloques/ejercicios para mostrarle al alumno qué falta), acá solo hace
+// falta el resumen. blocksDone/blocksTotal/status ya quedan cacheados en
+// Session cada vez que se marca una serie (ver PUT .../sets/:setNumber en
+// student.routes.ts), así que este cálculo lee eso directo en vez de volver
+// a traer rutina + bloques + ejercicios + setLogs por cada asignación —
+// varios round-trips menos por consulta.
 
 import type { Adherencia, DiaAdherencia, EstadoSesion, Sensacion, TipoRutina } from '../types/index.js';
 import { toDateString } from './dates.js';
-import { computeBloquesDia, summarizeBloques } from './progress.js';
-
-interface ExerciseRow {
-  id: string;
-  name: string;
-  sets: number;
-  reps: string;
-  load: string | null;
-  restSeconds: number;
-}
-
-interface BlockRow {
-  id: string;
-  letter: string;
-  name: string;
-  mode: string | null;
-  estMinutes: number;
-  note: string | null;
-  exercises: ExerciseRow[];
-}
-
-interface RoutineRow {
-  id: string;
-  name: string;
-  type: TipoRutina;
-  blocks: BlockRow[];
-}
-
-interface SetLogRow {
-  exerciseId: string;
-  setNumber: number;
-  completed: boolean;
-  loadUsed: string | null;
-  rpe: Sensacion | null;
-}
 
 export interface AssignmentForAdherence {
   date: Date;
-  routine: RoutineRow;
+  routine: { name: string; type: TipoRutina; blocksTotal: number };
   session: {
-    setLogs: SetLogRow[];
+    blocksDone: number;
+    blocksTotal: number;
+    status: EstadoSesion;
     durationMinutes: number | null;
     sensation: Sensacion | null;
-    status: EstadoSesion;
   } | null;
 }
 
 export function computeAdherence(assignments: AssignmentForAdherence[], start: string, end: string): Adherencia {
   const days: DiaAdherencia[] = assignments.map((assignment) => {
-    const bloques = computeBloquesDia(assignment.routine, assignment.session);
-    const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
+    // Sin Session: nadie tocó ese día todavía. bloquesTotal sale de la
+    // rutina actual (misma "verdad vacía" que summarizeBloques: 0 bloques
+    // lee como completo).
+    const bloquesTotal = assignment.session?.blocksTotal ?? assignment.routine.blocksTotal;
+    const bloquesCompletos = assignment.session?.blocksDone ?? 0;
+    const completo = assignment.session ? assignment.session.status === 'COMPLETO' : bloquesTotal === 0;
+
     return {
       date: toDateString(assignment.date),
       completo,
