@@ -3,7 +3,7 @@
 // GET /student/week (computeBloquesDia + summarizeBloques de lib/progress.ts),
 // para no reimplementar esa lógica del lado coach.
 
-import type { Adherencia, DiaAdherencia, Sensacion, TipoRutina } from '../types/index.js';
+import type { Adherencia, DiaAdherencia, EstadoSesion, Sensacion, TipoRutina } from '../types/index.js';
 import { toDateString } from './dates.js';
 import { computeBloquesDia, summarizeBloques } from './progress.js';
 
@@ -44,13 +44,28 @@ interface SetLogRow {
 export interface AssignmentForAdherence {
   date: Date;
   routine: RoutineRow;
-  session: { setLogs: SetLogRow[] } | null;
+  session: {
+    setLogs: SetLogRow[];
+    durationMinutes: number | null;
+    sensation: Sensacion | null;
+    status: EstadoSesion;
+  } | null;
 }
 
 export function computeAdherence(assignments: AssignmentForAdherence[], start: string, end: string): Adherencia {
   const days: DiaAdherencia[] = assignments.map((assignment) => {
     const bloques = computeBloquesDia(assignment.routine, assignment.session);
-    return { date: toDateString(assignment.date), completo: summarizeBloques(bloques).completo };
+    const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
+    return {
+      date: toDateString(assignment.date),
+      completo,
+      routineName: assignment.routine.name,
+      bloquesCompletos,
+      bloquesTotal,
+      durationMinutes: assignment.session?.durationMinutes ?? null,
+      sensation: assignment.session?.sensation ?? null,
+      estado: assignment.session?.status ?? 'SIN_HACER',
+    };
   });
 
   const asignados = days.length;

@@ -207,6 +207,12 @@ export interface AlumnoFicha {
 export interface DiaAdherencia {
   date: string;
   completo: boolean;
+  routineName: string;
+  bloquesCompletos: number;
+  bloquesTotal: number;
+  durationMinutes: number | null;
+  sensation: Sensacion | null;
+  estado: EstadoSesion;
 }
 
 export interface Adherencia {
