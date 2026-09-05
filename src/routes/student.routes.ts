@@ -6,7 +6,8 @@ import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '.
 import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/progress.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { routineWithBlocksInclude } from '../lib/routines.js';
-import type { DiaDetalle, DiaSemana, SemanaAlumno } from '../types/index.js';
+import { toMarca } from '../lib/marcas.js';
+import type { AlumnoFicha, DiaDetalle, DiaSemana, SemanaAlumno } from '../types/index.js';
 
 declare global {
   namespace Express {
@@ -36,6 +37,33 @@ studentRouter.use(requireAuth, requireRole('STUDENT'), async (req, res, next) =>
   }
   req.studentProfileId = profile.id;
   next();
+});
+
+// Espejo de GET /coach/students/:studentId (misma forma, AlumnoFicha):
+// plan, suscripción y marcas propias. El alumno sólo puede ver las suyas,
+// así que no hace falta resolver ownership como del lado coach.
+studentRouter.get('/me', async (req, res) => {
+  const profile = await prisma.studentProfile.findUnique({
+    where: { id: req.studentProfileId! },
+    include: {
+      user: { select: { name: true, email: true, initials: true } },
+      records: { orderBy: { updatedAt: 'desc' } },
+    },
+  });
+
+  const body: AlumnoFicha = {
+    id: profile!.id,
+    userId: profile!.userId,
+    name: profile!.user.name,
+    email: profile!.user.email,
+    initials: profile!.user.initials,
+    plan: profile!.plan,
+    planStartDate: profile!.planStartDate ? profile!.planStartDate.toISOString() : null,
+    planActive: profile!.planActive,
+    nextPayment: profile!.nextPayment ? profile!.nextPayment.toISOString() : null,
+    records: profile!.records.map(toMarca),
+  };
+  res.json(body);
 });
 
 studentRouter.get('/week', async (req, res) => {

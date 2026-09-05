@@ -7,12 +7,12 @@ import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '.
 import type { RoutineBlockCreate } from '../lib/routines.js';
 import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
+import { toMarca } from '../lib/marcas.js';
 import type {
   AlumnoFicha,
   AlumnoResumen,
   Asignacion,
   DiaAsignacionCoach,
-  Marca,
   RutinaListado,
   TipoRutina,
 } from '../types/index.js';
@@ -76,17 +76,6 @@ async function resolveOwnedRecord(res: Response, studentId: string, recordId: st
     return null;
   }
   return record;
-}
-
-function toMarca(record: { id: string; studentId: string; exerciseName: string; value: string; note: string | null; updatedAt: Date }): Marca {
-  return {
-    id: record.id,
-    studentId: record.studentId,
-    exerciseName: record.exerciseName,
-    value: record.value,
-    note: record.note,
-    updatedAt: record.updatedAt.toISOString(),
-  };
 }
 
 // ─────────────────────────────────────────────────────────────
