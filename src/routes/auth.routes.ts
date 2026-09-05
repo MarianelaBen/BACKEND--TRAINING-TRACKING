@@ -32,6 +32,22 @@ authRouter.post('/register', async (req, res) => {
     return;
   }
 
+  // Sistema de un solo coach: un alumno nuevo no puede quedar sin nadie que
+  // le asigne rutinas. Si en algún momento hay más de un coach, esto elige
+  // el más antiguo -- determinístico, no al azar -- pero ese caso todavía
+  // no tiene un criterio real de producto. Si no hay ningún coach (DB nueva,
+  // antes del seed), el alumno queda sin asignar, igual que antes de este
+  // cambio -- no bloquea el registro.
+  let coachId: string | null = null;
+  if (role === 'STUDENT') {
+    const coach = await prisma.user.findFirst({
+      where: { role: 'COACH' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    coachId = coach?.id ?? null;
+  }
+
   const passwordHash = await hashPassword(password);
   const user = await prisma.user.create({
     data: {
@@ -39,7 +55,7 @@ authRouter.post('/register', async (req, res) => {
       passwordHash,
       name,
       role: role as Rol,
-      ...(role === 'STUDENT' ? { studentProfile: { create: {} } } : {}),
+      ...(role === 'STUDENT' ? { studentProfile: { create: { coachId } } } : {}),
     },
   });
 
