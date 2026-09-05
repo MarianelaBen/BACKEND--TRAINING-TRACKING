@@ -7,6 +7,7 @@ import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/pro
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { routineWithBlocksInclude } from '../lib/routines.js';
 import { toMarca } from '../lib/marcas.js';
+import { computeAdherence } from '../lib/adherence.js';
 import type { AlumnoFicha, DiaDetalle, DiaSemana, SemanaAlumno } from '../types/index.js';
 
 declare global {
@@ -64,6 +65,63 @@ studentRouter.get('/me', async (req, res) => {
     records: profile!.records.map(toMarca),
   };
   res.json(body);
+});
+
+const MAX_ADHERENCE_DAYS = 180;
+
+// Espejo de GET /coach/students/:studentId/adherence: mismo parseo de
+// start/end (default = últimos 28 días) y mismo computeAdherence, pero sin
+// resolver ownership -- el alumno sólo puede ver la suya.
+studentRouter.get('/adherence', async (req, res) => {
+  const studentId = req.studentProfileId!;
+  const rawStart = req.query.start;
+  const rawEnd = req.query.end;
+
+  let end: string;
+  if (typeof rawEnd === 'string') {
+    if (!parseDateParam(rawEnd)) {
+      res.status(400).json({ error: 'end tiene que tener el formato YYYY-MM-DD' });
+      return;
+    }
+    end = rawEnd;
+  } else {
+    end = todayInGymTZ();
+  }
+
+  let start: string;
+  if (typeof rawStart === 'string') {
+    if (!parseDateParam(rawStart)) {
+      res.status(400).json({ error: 'start tiene que tener el formato YYYY-MM-DD' });
+      return;
+    }
+    start = rawStart;
+  } else {
+    start = addDays(end, -27);
+  }
+
+  if (start > end) {
+    res.status(400).json({ error: 'start tiene que ser anterior o igual a end' });
+    return;
+  }
+  const spanDays = (new Date(`${end}T00:00:00.000Z`).getTime() - new Date(`${start}T00:00:00.000Z`).getTime()) / 86_400_000;
+  if (spanDays > MAX_ADHERENCE_DAYS) {
+    res.status(400).json({ error: `El rango no puede superar los ${MAX_ADHERENCE_DAYS} días` });
+    return;
+  }
+
+  const assignments = await prisma.assignment.findMany({
+    where: {
+      studentId,
+      date: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${end}T00:00:00.000Z`) },
+    },
+    include: {
+      routine: { include: rutinaConBloques },
+      session: { include: { setLogs: true } },
+    },
+    orderBy: { date: 'asc' },
+  });
+
+  res.json(computeAdherence(assignments, start, end));
 });
 
 studentRouter.get('/week', async (req, res) => {
