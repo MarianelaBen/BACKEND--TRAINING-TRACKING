@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
@@ -5,7 +6,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
 import type { RoutineBlockCreate } from '../lib/routines.js';
-import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput } from '../lib/routines.js';
+import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput, validateMedida } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
 import { computeBloquesDia, summarizeBloques } from '../lib/progress.js';
 import { planMergeSetLogs } from '../lib/reassign.js';
@@ -17,6 +18,7 @@ import type {
   Asignacion,
   DiaAsignacionCoach,
   EstadoSesion,
+  OverrideEjercicio,
   RutinaListado,
   Sensacion,
   TipoRutina,
@@ -490,11 +492,79 @@ coachRouter.delete('/routines/:routineId', async (req, res) => {
 // ASIGNACIÓN (rutina a alumno por día)
 // ─────────────────────────────────────────────────────────────
 
+// Ids de los ejercicios de una rutina, para validar que un override apunte a
+// un ejercicio que realmente está en la rutina que se asignó ese día.
+async function ejerciciosDeLaRutina(routineId: string): Promise<Set<string>> {
+  const exercises = await prisma.exercise.findMany({
+    where: { block: { routineId } },
+    select: { id: true },
+  });
+  return new Set(exercises.map((e) => e.id));
+}
+
+// Reemplaza los valores personalizados de una asignación. Si cambió la rutina
+// hay que limpiarlos aunque no vengan nuevos: los viejos apuntan a los
+// ejercicios de la rutina anterior, que ya no se muestran.
+async function aplicarOverrides(
+  tx: Prisma.TransactionClient,
+  assignmentId: string,
+  overrides: OverrideEjercicio[] | undefined,
+  routineCambio: boolean,
+): Promise<void> {
+  if (overrides === undefined && !routineCambio) return;
+
+  await tx.assignmentExercise.deleteMany({ where: { assignmentId } });
+  if (overrides && overrides.length > 0) {
+    await tx.assignmentExercise.createMany({ data: overrides.map((o) => ({ ...o, assignmentId })) });
+  }
+}
+
+// Valida el array `overrides` que puede venir en POST .../assignments, para
+// asignar y personalizar en una sola request.
+function validateOverridesInput(
+  raw: unknown,
+  idsValidos: Set<string>,
+): { error: string } | { overrides: OverrideEjercicio[] } {
+  if (!Array.isArray(raw)) {
+    return { error: 'overrides tiene que ser un array' };
+  }
+  const overrides: OverrideEjercicio[] = [];
+  const vistos = new Set<string>();
+
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i] as { exerciseId?: unknown; load?: unknown; reps?: unknown; durationSeconds?: unknown };
+    if (typeof item?.exerciseId !== 'string' || !idsValidos.has(item.exerciseId)) {
+      return { error: `overrides[${i}].exerciseId no es un ejercicio de esta rutina` };
+    }
+    if (vistos.has(item.exerciseId)) {
+      return { error: `overrides[${i}].exerciseId está repetido` };
+    }
+    vistos.add(item.exerciseId);
+
+    if (item.load !== undefined && item.load !== null && typeof item.load !== 'string') {
+      return { error: `overrides[${i}].load inválido` };
+    }
+    const medida = validateMedida(item);
+    if ('error' in medida) {
+      return { error: `overrides[${i}]${medida.error}` };
+    }
+
+    overrides.push({
+      exerciseId: item.exerciseId,
+      reps: medida.reps,
+      durationSeconds: medida.durationSeconds,
+      load: (item.load ?? null) as string | null,
+    });
+  }
+
+  return { overrides };
+}
+
 coachRouter.post('/students/:studentId/assignments', async (req, res) => {
   const student = await resolveOwnedStudent(req, res);
   if (!student) return;
 
-  const { routineId, date: rawDate } = req.body ?? {};
+  const { routineId, date: rawDate, overrides: rawOverrides } = req.body ?? {};
   if (typeof routineId !== 'string' || routineId.trim().length === 0) {
     res.status(400).json({ error: 'routineId es obligatorio' });
     return;
@@ -512,6 +582,18 @@ coachRouter.post('/students/:studentId/assignments', async (req, res) => {
   const routine = await resolveOwnedRoutine(req, res, routineId);
   if (!routine) return;
 
+  // Personalizar los ejercicios en la misma request que asigna la rutina, así
+  // el coach no tiene que hacer un PUT por ejercicio después.
+  let overrides: OverrideEjercicio[] | undefined;
+  if (rawOverrides !== undefined) {
+    const validated = validateOverridesInput(rawOverrides, await ejerciciosDeLaRutina(routine.id));
+    if ('error' in validated) {
+      res.status(400).json({ error: validated.error });
+      return;
+    }
+    overrides = validated.overrides;
+  }
+
   const existing = await prisma.assignment.findUnique({
     where: { studentId_date: { studentId: student.id, date } },
     include: { session: { select: { id: true } } },
@@ -519,10 +601,14 @@ coachRouter.post('/students/:studentId/assignments', async (req, res) => {
 
   // Camino simple: el día no tiene historial, se pisa la asignación y listo.
   if (!existing?.session) {
-    const assignment = await prisma.assignment.upsert({
-      where: { studentId_date: { studentId: student.id, date } },
-      create: { studentId: student.id, routineId: routine.id, date },
-      update: { routineId: routine.id },
+    const assignment = await prisma.$transaction(async (tx) => {
+      const creada = await tx.assignment.upsert({
+        where: { studentId_date: { studentId: student.id, date } },
+        create: { studentId: student.id, routineId: routine.id, date },
+        update: { routineId: routine.id },
+      });
+      await aplicarOverrides(tx, creada.id, overrides, existing !== null && existing.routineId !== routine.id);
+      return creada;
     });
 
     const body: Asignacion = {
@@ -585,7 +671,9 @@ coachRouter.post('/students/:studentId/assignments', async (req, res) => {
         status: conservadas.length === 0 ? 'SIN_HACER' : resumen.completo ? 'COMPLETO' : 'A_MEDIAS',
       },
     });
-    return tx.assignment.update({ where: { id: existing.id }, data: { routineId: routine.id } });
+    const actualizada = await tx.assignment.update({ where: { id: existing.id }, data: { routineId: routine.id } });
+    await aplicarOverrides(tx, actualizada.id, overrides, existing.routineId !== routine.id);
+    return actualizada;
   });
 
   const body: Asignacion = {
@@ -628,6 +716,69 @@ coachRouter.delete('/students/:studentId/assignments/:date', async (req, res) =>
     await tx.assignment.delete({ where: { id: assignment.id } });
   });
   res.status(204).end();
+});
+
+// Personaliza UN ejercicio para ESTE alumno en ESTE día: el peso, y las
+// repeticiones o el tiempo. Es lo que hace que una rutina genérica sirva para
+// todos sin que cambiarle la carga a un alumno se la cambie a los demás.
+//
+// Es un PUT del override completo, no un PATCH: lo que no venga en el body
+// queda en null y el ejercicio vuelve a mostrar el valor sugerido de la rutina.
+coachRouter.put('/students/:studentId/assignments/:date/exercises/:exerciseId', async (req, res) => {
+  const student = await resolveOwnedStudent(req, res);
+  if (!student) return;
+
+  const date = parseDateParam(req.params.date);
+  if (!date) {
+    res.status(400).json({ error: 'date tiene que tener el formato YYYY-MM-DD' });
+    return;
+  }
+
+  const assignment = await prisma.assignment.findUnique({
+    where: { studentId_date: { studentId: student.id, date } },
+    select: { id: true, routineId: true },
+  });
+  if (!assignment) {
+    res.status(404).json({ error: 'No hay una asignación ese día' });
+    return;
+  }
+
+  const exerciseId = req.params.exerciseId;
+  const idsValidos = await ejerciciosDeLaRutina(assignment.routineId);
+  if (!idsValidos.has(exerciseId)) {
+    res.status(404).json({ error: 'Ese ejercicio no pertenece a la rutina de ese día' });
+    return;
+  }
+
+  const { load } = req.body ?? {};
+  if (load !== undefined && load !== null && typeof load !== 'string') {
+    res.status(400).json({ error: 'load inválido' });
+    return;
+  }
+  const medida = validateMedida(req.body ?? {});
+  if ('error' in medida) {
+    res.status(400).json({ error: `El ejercicio${medida.error}` });
+    return;
+  }
+
+  const data = {
+    reps: medida.reps,
+    durationSeconds: medida.durationSeconds,
+    load: (load ?? null) as string | null,
+  };
+  const override = await prisma.assignmentExercise.upsert({
+    where: { assignmentId_exerciseId: { assignmentId: assignment.id, exerciseId } },
+    create: { assignmentId: assignment.id, exerciseId, ...data },
+    update: data,
+  });
+
+  const body: OverrideEjercicio = {
+    exerciseId: override.exerciseId,
+    reps: override.reps,
+    durationSeconds: override.durationSeconds,
+    load: override.load,
+  };
+  res.json(body);
 });
 
 // Vista semanal de lo planificado (no calcula completitud — para eso está

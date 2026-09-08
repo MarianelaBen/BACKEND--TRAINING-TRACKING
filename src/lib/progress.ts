@@ -48,14 +48,38 @@ interface SessionInput {
   setLogs: SetLogInput[];
 }
 
+// Valores personalizados de un ejercicio para el día concreto que se está
+// mirando (AssignmentExercise). Ver resolveMedida más abajo.
+export interface OverrideInput {
+  reps: string | null;
+  durationSeconds: number | null;
+  load: string | null;
+}
+
+// Cuál gana entre el valor de la rutina y el del día. La medida (reps/tiempo)
+// se resuelve EN BLOQUE, no campo por campo: si el override dice "45 segundos"
+// y la rutina decía "8 repeticiones", mezclarlos dejaría el ejercicio con las
+// dos cosas, que es justo lo que no puede pasar. load sí cae por separado.
+function resolveEjercicio(exercise: ExerciseInput, override: OverrideInput | undefined) {
+  const defineMedida = override !== undefined && (override.reps !== null || override.durationSeconds !== null);
+  return {
+    reps: defineMedida ? override.reps : exercise.reps,
+    durationSeconds: defineMedida ? override.durationSeconds : exercise.durationSeconds,
+    load: override?.load ?? exercise.load,
+  };
+}
+
 // ultimaCargaPorNombre: nombre de ejercicio normalizado -> última carga que el
 // alumno usó en un día anterior. La consulta vive en lib/exercises.ts; acá sólo
 // se lee, para que este módulo siga siendo puro. Si no se pasa, ultimaCarga
 // queda en null (es el caso de /week, que no la necesita).
+//
+// overridesPorEjercicio: exerciseId -> valores personalizados de ese día.
 export function computeBloquesDia(
   routine: RoutineInput,
   session: SessionInput | null,
   ultimaCargaPorNombre?: Map<string, string>,
+  overridesPorEjercicio?: Map<string, OverrideInput>,
 ): BloqueDia[] {
   const setLogsPorEjercicio = new Map<string, Map<number, SetLogInput>>();
   for (const log of session?.setLogs ?? []) {
@@ -79,14 +103,15 @@ export function computeBloquesDia(
             : { setNumber, completed: false, loadUsed: null, repsDone: null, rpe: null },
         );
       }
+      const { reps, durationSeconds, load } = resolveEjercicio(exercise, overridesPorEjercicio?.get(exercise.id));
       return {
         id: exercise.id,
         name: exercise.name,
         type: exercise.type,
         sets: exercise.sets,
-        reps: exercise.reps,
-        durationSeconds: exercise.durationSeconds,
-        load: exercise.load,
+        reps,
+        durationSeconds,
+        load,
         ultimaCarga: ultimaCargaPorNombre?.get(normalizeExerciseName(exercise.name)) ?? null,
         restSeconds: exercise.restSeconds,
         completo: setsEstado.every((s) => s.completed),

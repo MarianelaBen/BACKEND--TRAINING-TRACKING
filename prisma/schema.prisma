@@ -104,13 +104,17 @@ model Exercise {
   // Un ejercicio se mide por repeticiones O por tiempo, nunca por las dos.
   // La regla no se puede expresar en Prisma: va como validación en
   // POST/PATCH /coach/routines y como CHECK en la migración.
+  // reps / durationSeconds / load son el valor SUGERIDO de la rutina, y quedan
+  // vacíos en las rutinas genéricas: el valor que ve cada alumno puede estar
+  // pisado por un AssignmentExercise del día. Ver ese modelo.
   reps            String? // "8", "máx", "12 por lado" — texto a propósito
   durationSeconds Int? // plancha 45s, bici 5 min…
   load            String? // "60 kg", "Banda", "—"
   restSeconds     Int          @default(0)
   orderIndex      Int
 
-  setLogs SetLog[]
+  setLogs             SetLog[]
+  assignmentOverrides AssignmentExercise[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -126,10 +130,33 @@ model Assignment {
   routine   Routine        @relation(fields: [routineId], references: [id])
   date      DateTime       @db.Date // el día concreto asignado
 
-  session Session?
+  session           Session?
+  exerciseOverrides AssignmentExercise[]
 
   @@unique([studentId, date]) // un alumno, una rutina por día
   @@index([studentId, date])
+}
+
+// Personalización de un ejercicio para UN alumno en UN día.
+//
+// Chino arma la rutina genérica (sin peso ni repeticiones) y completa los
+// valores recién cuando se la asigna a alguien. Sin esto, cambiarle el peso a
+// Mica se lo cambiaba a TODOS los alumnos que tuvieran esa rutina asignada,
+// porque load y reps viven en Exercise, o sea dentro de la rutina.
+//
+// GET /student/days/:date resuelve cuál gana: si hay override para ese día,
+// gana el override; si no, el valor sugerido de la rutina.
+model AssignmentExercise {
+  id              String     @id @default(cuid())
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  exerciseId      String
+  exercise        Exercise   @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  reps            String?
+  load            String?
+  durationSeconds Int?
+
+  @@unique([assignmentId, exerciseId])
 }
 
 // ─────────────────────────────────────────────────────────────

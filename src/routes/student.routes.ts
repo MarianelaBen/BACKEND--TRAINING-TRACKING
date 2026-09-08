@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
 import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/progress.js';
+import type { OverrideInput } from '../lib/progress.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { routineWithBlocksInclude, toRutinaResumen } from '../lib/routines.js';
 import { fetchUltimaCargaPorNombre } from '../lib/exercises.js';
@@ -28,6 +29,17 @@ export const studentRouter = Router();
 // series, más abajo, y son sólo una caché para lecturas agregadas futuras
 // del lado coach — nunca la fuente de verdad).
 const rutinaConBloques = routineWithBlocksInclude;
+
+// Los valores personalizados del día (peso, repeticiones o tiempo que Chino le
+// puso a ESTE alumno para ESTA fecha) pisan a los de la rutina. La resolución
+// vive en computeBloquesDia; acá sólo se arma el índice por ejercicio.
+function indexarOverrides(
+  overrides: { exerciseId: string; reps: string | null; durationSeconds: number | null; load: string | null }[],
+): Map<string, OverrideInput> {
+  return new Map(
+    overrides.map((o) => [o.exerciseId, { reps: o.reps, durationSeconds: o.durationSeconds, load: o.load }]),
+  );
+}
 
 studentRouter.use(requireAuth, requireRole('STUDENT'), async (req, res, next) => {
   const profile = await prisma.studentProfile.findUnique({
@@ -214,6 +226,7 @@ studentRouter.get('/days/:date', async (req, res) => {
     include: {
       routine: { include: rutinaConBloques },
       session: { include: { setLogs: true } },
+      exerciseOverrides: true,
     },
   });
 
@@ -238,7 +251,12 @@ studentRouter.get('/days/:date', async (req, res) => {
   const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
   const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
 
-  const bloques = computeBloquesDia(assignment.routine, assignment.session, ultimaCarga);
+  const bloques = computeBloquesDia(
+    assignment.routine,
+    assignment.session,
+    ultimaCarga,
+    indexarOverrides(assignment.exerciseOverrides),
+  );
   const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
 
   const body: DiaDetalle = {
@@ -309,12 +327,13 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
   // Lectura previa, fuera de la transacción — todavía no muta nada.
   const assignment = await prisma.assignment.findUnique({
     where: { studentId_date: { studentId, date } },
-    include: { routine: { include: rutinaConBloques } },
+    include: { routine: { include: rutinaConBloques }, exerciseOverrides: true },
   });
   if (!assignment) {
     res.status(404).json({ error: 'No tenés una rutina asignada este día' });
     return;
   }
+  const overrides = indexarOverrides(assignment.exerciseOverrides);
 
   const exercise = assignment.routine.blocks.flatMap((b) => b.exercises).find((e) => e.id === exerciseId);
   if (!exercise) {
@@ -347,7 +366,7 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
     });
 
     const setLogs = await tx.setLog.findMany({ where: { sessionId: session.id } });
-    const bloques = computeBloquesDia(assignment.routine, { setLogs }, ultimaCarga);
+    const bloques = computeBloquesDia(assignment.routine, { setLogs }, ultimaCarga, overrides);
     const resumen = summarizeBloques(bloques);
 
     await tx.session.update({
@@ -419,6 +438,7 @@ studentRouter.put('/days/:date/finish', async (req, res) => {
     include: {
       routine: { include: rutinaConBloques },
       session: { include: { setLogs: true } },
+      exerciseOverrides: true,
     },
   });
   if (!assignment) {
@@ -439,7 +459,12 @@ studentRouter.put('/days/:date/finish', async (req, res) => {
   const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
   const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
 
-  const bloques = computeBloquesDia(assignment.routine, session, ultimaCarga);
+  const bloques = computeBloquesDia(
+    assignment.routine,
+    session,
+    ultimaCarga,
+    indexarOverrides(assignment.exerciseOverrides),
+  );
   const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
   const dateStr = toDateString(date);
 

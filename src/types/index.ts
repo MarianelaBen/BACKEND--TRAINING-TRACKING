@@ -264,3 +264,13 @@ export interface DiaAsignacionCoach {
   esDescanso: boolean;
   routine: RutinaResumen | null;
 }
+
+// Los valores que Chino le puso a UN ejercicio para UN alumno en UN día. Pisan
+// a los de la rutina, que pasan a ser el valor sugerido. reps y durationSeconds
+// nunca vienen los dos: un ejercicio se mide por repeticiones o por tiempo.
+export interface OverrideEjercicio {
+  exerciseId: string;
+  reps: string | null;
+  durationSeconds: number | null;
+  load: string | null;
+}

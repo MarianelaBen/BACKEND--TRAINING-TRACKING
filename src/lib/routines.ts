@@ -104,6 +104,43 @@ const TIPOS_EJERCICIO: TipoRutina[] = ['FUERZA', 'METABOLICO', 'MOVILIDAD'];
 // Una hora por serie ya es un dedazo, no un ejercicio.
 const MAX_DURATION_SECONDS = 3600;
 
+export interface Medida {
+  reps: string | null;
+  durationSeconds: number | null;
+}
+
+// La regla "repeticiones o tiempo, nunca las dos" en un solo lugar: la usan
+// tanto los ejercicios de una rutina como los overrides por asignación. Los
+// dos vacíos es válido (rutina genérica, valor sin definir todavía); la base
+// lo garantiza además con un CHECK en cada tabla.
+export function validateMedida(input: {
+  reps?: unknown;
+  durationSeconds?: unknown;
+}): { error: string } | Medida {
+  const tieneReps = input.reps !== undefined && input.reps !== null;
+  const tieneDuracion = input.durationSeconds !== undefined && input.durationSeconds !== null;
+
+  if (tieneReps && (typeof input.reps !== 'string' || input.reps.trim().length === 0)) {
+    return { error: '.reps inválido' };
+  }
+  if (
+    tieneDuracion &&
+    (!Number.isInteger(input.durationSeconds) ||
+      (input.durationSeconds as number) <= 0 ||
+      (input.durationSeconds as number) > MAX_DURATION_SECONDS)
+  ) {
+    return { error: `.durationSeconds tiene que ser un entero entre 1 y ${MAX_DURATION_SECONDS}` };
+  }
+  if (tieneReps && tieneDuracion) {
+    return { error: ': un ejercicio se mide por repeticiones o por tiempo, no por las dos' };
+  }
+
+  return {
+    reps: tieneReps ? (input.reps as string) : null,
+    durationSeconds: tieneDuracion ? (input.durationSeconds as number) : null,
+  };
+}
+
 export interface RoutineBlockCreate {
   letter: string;
   name: string;
@@ -164,27 +201,11 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
       if (!Number.isInteger(exercise.sets) || exercise.sets <= 0) {
         return { error: `blocks[${i}].exercises[${j}].sets tiene que ser un entero positivo` };
       }
-      // Repeticiones O tiempo, nunca las dos. La base lo garantiza además con
-      // un CHECK; acá se valida para devolver un 400 con mensaje claro en vez
-      // de dejar que reviente el constraint.
-      const tieneReps = exercise.reps !== undefined && exercise.reps !== null;
-      const tieneDuracion = exercise.durationSeconds !== undefined && exercise.durationSeconds !== null;
-      if (tieneReps && (typeof exercise.reps !== 'string' || exercise.reps.trim().length === 0)) {
-        return { error: `blocks[${i}].exercises[${j}].reps inválido` };
-      }
-      if (
-        tieneDuracion &&
-        (!Number.isInteger(exercise.durationSeconds) ||
-          exercise.durationSeconds <= 0 ||
-          exercise.durationSeconds > MAX_DURATION_SECONDS)
-      ) {
-        return { error: `blocks[${i}].exercises[${j}].durationSeconds tiene que ser un entero entre 1 y ${MAX_DURATION_SECONDS}` };
-      }
-      if (tieneReps && tieneDuracion) {
-        return { error: `blocks[${i}].exercises[${j}]: un ejercicio se mide por repeticiones o por tiempo, no por las dos` };
-      }
-      if (!tieneReps && !tieneDuracion) {
-        return { error: `blocks[${i}].exercises[${j}]: falta reps o durationSeconds` };
+      // Repeticiones O tiempo, nunca las dos — pero pueden faltar las dos: eso
+      // es una rutina genérica, que se completa al asignarla (AssignmentExercise).
+      const medida = validateMedida(exercise);
+      if ('error' in medida) {
+        return { error: `blocks[${i}].exercises[${j}]${medida.error}` };
       }
       if (exercise.load !== undefined && exercise.load !== null && typeof exercise.load !== 'string') {
         return { error: `blocks[${i}].exercises[${j}].load inválido` };
@@ -196,8 +217,8 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
         name: exercise.name,
         type: (exercise.type ?? null) as TipoRutina | null,
         sets: exercise.sets,
-        reps: exercise.reps ?? null,
-        durationSeconds: exercise.durationSeconds ?? null,
+        reps: medida.reps,
+        durationSeconds: medida.durationSeconds,
         load: exercise.load ?? null,
         restSeconds: exercise.restSeconds ?? 0,
         orderIndex: j,
