@@ -7,6 +7,8 @@ import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '.
 import type { RoutineBlockCreate } from '../lib/routines.js';
 import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
+import { computeBloquesDia, summarizeBloques } from '../lib/progress.js';
+import { planMergeSetLogs } from '../lib/reassign.js';
 import type { AssignmentForAdherence } from '../lib/adherence.js';
 import { toMarca } from '../lib/marcas.js';
 import type {
@@ -514,15 +516,76 @@ coachRouter.post('/students/:studentId/assignments', async (req, res) => {
     where: { studentId_date: { studentId: student.id, date } },
     include: { session: { select: { id: true } } },
   });
-  if (existing?.session) {
-    res.status(409).json({ error: 'Ese día ya tiene una sesión con series marcadas, no se puede reasignar' });
+
+  // Camino simple: el día no tiene historial, se pisa la asignación y listo.
+  if (!existing?.session) {
+    const assignment = await prisma.assignment.upsert({
+      where: { studentId_date: { studentId: student.id, date } },
+      create: { studentId: student.id, routineId: routine.id, date },
+      update: { routineId: routine.id },
+    });
+
+    const body: Asignacion = {
+      id: assignment.id,
+      studentId: assignment.studentId,
+      routineId: assignment.routineId,
+      date: toDateString(assignment.date),
+      routine: toRutinaResumen(routine),
+    };
+    res.status(existing ? 200 : 201).json(body);
     return;
   }
 
-  const assignment = await prisma.assignment.upsert({
-    where: { studentId_date: { studentId: student.id, date } },
-    create: { studentId: student.id, routineId: routine.id, date },
-    update: { routineId: routine.id },
+  // El día ya tiene series marcadas. Antes esto era un 409; ahora se reasigna y
+  // se hace el merge del historial: lo que el alumno ya hizo y sigue estando en
+  // la rutina nueva queda marcado, el resto se pierde. El front avisa con una
+  // alerta antes de llegar acá, y la respuesta dice qué pasó.
+  const sessionId = existing.session.id;
+  const destino = await prisma.routine.findUnique({
+    where: { id: routine.id },
+    include: routineWithBlocksInclude,
+  });
+
+  const previos = await prisma.setLog.findMany({
+    where: { sessionId },
+    include: { exercise: { select: { name: true } } },
+    orderBy: { setNumber: 'asc' },
+  });
+
+  const { conservadas, borradas } = planMergeSetLogs(
+    previos.map((log) => ({
+      exerciseName: log.exercise.name,
+      setNumber: log.setNumber,
+      completed: log.completed,
+      loadUsed: log.loadUsed,
+      repsDone: log.repsDone,
+      rpe: log.rpe,
+    })),
+    destino!,
+  );
+
+  // Se borra todo y se recrea lo que sobrevive: re-apuntar los SetLog de a uno
+  // puede chocar contra el @@unique(sessionId, exerciseId, setNumber) a mitad
+  // de camino. Los ids de SetLog cambian, pero no los usa nadie afuera.
+  const resumen = summarizeBloques(computeBloquesDia(destino!, { setLogs: conservadas }));
+
+  const assignment = await prisma.$transaction(async (tx) => {
+    await tx.setLog.deleteMany({ where: { sessionId } });
+    if (conservadas.length > 0) {
+      await tx.setLog.createMany({ data: conservadas.map((s) => ({ ...s, sessionId })) });
+    }
+    // La Session también apunta a la rutina, y blocksDone/blocksTotal/status
+    // quedan cacheados ahí: sin recalcularlos, la adherencia miente.
+    await tx.session.update({
+      where: { id: sessionId },
+      data: {
+        routineId: routine.id,
+        blocksDone: resumen.bloquesCompletos,
+        blocksTotal: resumen.bloquesTotal,
+        status: conservadas.length === 0 ? 'SIN_HACER' : resumen.completo ? 'COMPLETO' : 'A_MEDIAS',
+      },
+    });
+    return tx.assignment.update({ where: { id: existing.id }, data: { routineId: routine.id } });
   });
 
   const body: Asignacion = {
@@ -531,8 +594,9 @@ coachRouter.post('/students/:studentId/assignments', async (req, res) => {
     routineId: assignment.routineId,
     date: toDateString(assignment.date),
     routine: toRutinaResumen(routine),
+    merge: { conservadas: conservadas.length, borradas },
   };
-  res.status(existing ? 200 : 201).json(body);
+  res.json(body);
 });
 
 coachRouter.delete('/students/:studentId/assignments/:date', async (req, res) => {
@@ -553,12 +617,16 @@ coachRouter.delete('/students/:studentId/assignments/:date', async (req, res) =>
     res.status(404).json({ error: 'No hay una asignación ese día' });
     return;
   }
-  if (assignment.session) {
-    res.status(409).json({ error: 'Ese día ya tiene una sesión con series marcadas, no se puede desasignar' });
-    return;
-  }
 
-  await prisma.assignment.delete({ where: { id: assignment.id } });
+  // Desasignar un día ya entrenado se permite (antes era 409): borra la sesión
+  // y con ella el historial de ese día. Los SetLog se van solos por el
+  // onDelete: Cascade de Session. El front avisa antes de llegar acá.
+  await prisma.$transaction(async (tx) => {
+    if (assignment.session) {
+      await tx.session.delete({ where: { id: assignment.session.id } });
+    }
+    await tx.assignment.delete({ where: { id: assignment.id } });
+  });
   res.status(204).end();
 });
 

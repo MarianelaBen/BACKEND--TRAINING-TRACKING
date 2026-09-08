@@ -72,6 +72,14 @@ export interface Asignacion {
   routineId: string;
   date: string;
   routine?: RutinaResumen;
+  // Sólo cuando se reasignó un día que el alumno ya había empezado: cuántas
+  // series se pudieron conservar y cuántas se perdieron, para la alerta.
+  merge?: ResultadoMerge;
+}
+
+export interface ResultadoMerge {
+  conservadas: number;
+  borradas: number;
 }
 
 export interface SetLog {
