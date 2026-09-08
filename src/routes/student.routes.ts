@@ -5,7 +5,8 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
 import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/progress.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
-import { routineWithBlocksInclude } from '../lib/routines.js';
+import { routineWithBlocksInclude, toRutinaResumen } from '../lib/routines.js';
+import { fetchUltimaCargaPorNombre } from '../lib/exercises.js';
 import { toMarca } from '../lib/marcas.js';
 import { computeAdherence } from '../lib/adherence.js';
 import type { AssignmentForAdherence } from '../lib/adherence.js';
@@ -182,11 +183,16 @@ studentRouter.get('/week', async (req, res) => {
     const date = addDays(start, i);
     const assignment = porFecha.get(date);
     if (!assignment) {
-      days.push({ date, esDescanso: true, completo: false });
+      days.push({ date, esDescanso: true, completo: false, rutina: null });
       continue;
     }
     const bloques = computeBloquesDia(assignment.routine, assignment.session);
-    days.push({ date, esDescanso: false, completo: summarizeBloques(bloques).completo });
+    days.push({
+      date,
+      esDescanso: false,
+      completo: summarizeBloques(bloques).completo,
+      rutina: toRutinaResumen(assignment.routine),
+    });
   }
 
   const body: SemanaAlumno = { start, end, days };
@@ -229,7 +235,10 @@ studentRouter.get('/days/:date', async (req, res) => {
     return;
   }
 
-  const bloques = computeBloquesDia(assignment.routine, assignment.session);
+  const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
+  const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
+
+  const bloques = computeBloquesDia(assignment.routine, assignment.session, ultimaCarga);
   const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
 
   const body: DiaDetalle = {
@@ -250,6 +259,10 @@ studentRouter.get('/days/:date', async (req, res) => {
 
 const SENSACIONES: Sensacion[] = ['FACIL', 'JUSTA', 'AL_LIMITE', 'NO_PUDE'];
 
+// Tope de repeticiones por serie: no hay ejercicio real de 3 dígitos, así que
+// arriba de esto es un dedazo, no un dato.
+const MAX_REPS_DONE = 100;
+
 // Idempotente: el cliente manda el setNumber exacto (ya lo tiene, GET /days/:date
 // expone cada slot numerado en setsEstado), así un reintento de red no duplica
 // una marca. Por ahora sólo acepta completed:true — desmarcar no existe en el
@@ -269,7 +282,7 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
   }
   const setNumber = Number(req.params.setNumber);
 
-  const { completed, loadUsed, rpe } = req.body ?? {};
+  const { completed, loadUsed, repsDone, rpe } = req.body ?? {};
   if (completed !== true) {
     res.status(400).json({ error: 'Por ahora sólo se puede marcar una serie como completada (completed: true)' });
     return;
@@ -281,6 +294,14 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
   if (loadUsed !== undefined && loadUsed !== null && typeof loadUsed !== 'string') {
     res.status(400).json({ error: 'loadUsed inválido' });
     return;
+  }
+  // Opcional, igual que loadUsed: si el alumno no lo anota, la serie se marca
+  // lo mismo y repsDone queda null.
+  if (repsDone !== undefined && repsDone !== null) {
+    if (!Number.isInteger(repsDone) || repsDone < 0 || repsDone > MAX_REPS_DONE) {
+      res.status(400).json({ error: `repsDone tiene que ser un entero entre 0 y ${MAX_REPS_DONE}` });
+      return;
+    }
   }
 
   const exerciseId = req.params.exerciseId;
@@ -306,7 +327,11 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
   }
 
   const loadUsedFinal: string | null = loadUsed ?? null;
+  const repsDoneFinal: number | null = repsDone ?? null;
   const rpeFinal: Sensacion | null = rpe ?? null;
+
+  const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
+  const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
 
   const { bloques, bloquesCompletos, bloquesTotal, completo, durationMinutes, sensation } = await prisma.$transaction(async (tx) => {
     const session = await tx.session.upsert({
@@ -317,12 +342,12 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
 
     await tx.setLog.upsert({
       where: { sessionId_exerciseId_setNumber: { sessionId: session.id, exerciseId, setNumber } },
-      create: { sessionId: session.id, exerciseId, setNumber, completed: true, loadUsed: loadUsedFinal, rpe: rpeFinal },
-      update: { completed: true, loadUsed: loadUsedFinal, rpe: rpeFinal },
+      create: { sessionId: session.id, exerciseId, setNumber, completed: true, loadUsed: loadUsedFinal, repsDone: repsDoneFinal, rpe: rpeFinal },
+      update: { completed: true, loadUsed: loadUsedFinal, repsDone: repsDoneFinal, rpe: rpeFinal },
     });
 
     const setLogs = await tx.setLog.findMany({ where: { sessionId: session.id } });
-    const bloques = computeBloquesDia(assignment.routine, { setLogs });
+    const bloques = computeBloquesDia(assignment.routine, { setLogs }, ultimaCarga);
     const resumen = summarizeBloques(bloques);
 
     await tx.session.update({
@@ -411,7 +436,10 @@ studentRouter.put('/days/:date/finish', async (req, res) => {
     include: { setLogs: true },
   });
 
-  const bloques = computeBloquesDia(assignment.routine, session);
+  const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
+  const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
+
+  const bloques = computeBloquesDia(assignment.routine, session, ultimaCarga);
   const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
   const dateStr = toDateString(date);
 

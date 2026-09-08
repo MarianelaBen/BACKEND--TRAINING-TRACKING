@@ -31,6 +31,9 @@ export interface Ejercicio {
   id: string;
   blockId: string;
   name: string;
+  // Tipo de trabajo del ejercicio. null en los ejercicios cargados antes de
+  // que existiera el campo — el front no puede asumir que siempre viene.
+  type: TipoRutina | null;
   sets: number;
   reps: string;
   load: string | null;
@@ -74,6 +77,8 @@ export interface SetLog {
   setNumber: number;
   completed: boolean;
   loadUsed: string | null;
+  // Lo que el alumno hizo de verdad. Ejercicio.reps es el plan del coach.
+  repsDone: number | null;
   rpe: Sensacion | null;
 }
 
@@ -127,15 +132,22 @@ export interface EstadoSet {
   setNumber: number;
   completed: boolean;
   loadUsed: string | null;
+  repsDone: number | null;
   rpe: Sensacion | null;
 }
 
 export interface EjercicioDia {
   id: string;
   name: string;
+  type: TipoRutina | null;
   sets: number;
   reps: string;
   load: string | null;
+  // Lo último que el alumno levantó en un ejercicio con este mismo nombre, en
+  // un día anterior. null si nunca lo hizo o si nunca anotó la carga. Se
+  // cruza por nombre a propósito: cada rutina tiene sus propios Exercise, así
+  // que el mismo ejercicio en dos rutinas son dos filas con ids distintos.
+  ultimaCarga: string | null;
   restSeconds: number;
   completo: boolean;
   setsEstado: EstadoSet[];
@@ -156,6 +168,8 @@ export interface DiaSemana {
   date: string;
   esDescanso: boolean;
   completo: boolean;
+  // Mismo shape que DiaAsignacionCoach.routine, para que el front lo reuse.
+  rutina: RutinaResumen | null;
 }
 
 export interface SemanaAlumno {

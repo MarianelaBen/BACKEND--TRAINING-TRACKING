@@ -17,6 +17,7 @@ interface ExerciseRow {
   id: string;
   blockId: string;
   name: string;
+  type: string | null;
   sets: number;
   reps: string;
   load: string | null;
@@ -51,6 +52,7 @@ export function toRutina(routine: RoutineRow): Rutina {
       id: exercise.id,
       blockId: exercise.blockId,
       name: exercise.name,
+      type: exercise.type as TipoRutina | null,
       sets: exercise.sets,
       reps: exercise.reps,
       load: exercise.load,
@@ -86,12 +88,15 @@ export function toRutinaResumen(routine: { id: string; name: string; type: strin
 
 export interface RoutineExerciseCreate {
   name: string;
+  type: TipoRutina | null;
   sets: number;
   reps: string;
   load: string | null;
   restSeconds: number;
   orderIndex: number;
 }
+
+const TIPOS_EJERCICIO: TipoRutina[] = ['FUERZA', 'METABOLICO', 'MOVILIDAD'];
 
 export interface RoutineBlockCreate {
   letter: string;
@@ -143,6 +148,13 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
       if (typeof exercise?.name !== 'string' || exercise.name.trim().length === 0) {
         return { error: `blocks[${i}].exercises[${j}].name es obligatorio` };
       }
+      if (
+        exercise.type !== undefined &&
+        exercise.type !== null &&
+        (typeof exercise.type !== 'string' || !TIPOS_EJERCICIO.includes(exercise.type as TipoRutina))
+      ) {
+        return { error: `blocks[${i}].exercises[${j}].type tiene que ser uno de: ${TIPOS_EJERCICIO.join(', ')}` };
+      }
       if (!Number.isInteger(exercise.sets) || exercise.sets <= 0) {
         return { error: `blocks[${i}].exercises[${j}].sets tiene que ser un entero positivo` };
       }
@@ -157,6 +169,7 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
       }
       exercisesData.push({
         name: exercise.name,
+        type: (exercise.type ?? null) as TipoRutina | null,
         sets: exercise.sets,
         reps: exercise.reps,
         load: exercise.load ?? null,

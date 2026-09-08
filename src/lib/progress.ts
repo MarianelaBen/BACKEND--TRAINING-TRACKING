@@ -5,10 +5,12 @@
 // prototipo). No es un bug: la validación de eso es tarea del lado coach.
 
 import type { BloqueDia, EjercicioDia, EstadoSet, Sensacion, TipoRutina } from '../types/index.js';
+import { normalizeExerciseName } from './exercises.js';
 
 interface ExerciseInput {
   id: string;
   name: string;
+  type: TipoRutina | null;
   sets: number;
   reps: string;
   load: string | null;
@@ -37,6 +39,7 @@ interface SetLogInput {
   setNumber: number;
   completed: boolean;
   loadUsed: string | null;
+  repsDone: number | null;
   rpe: Sensacion | null;
 }
 
@@ -44,7 +47,15 @@ interface SessionInput {
   setLogs: SetLogInput[];
 }
 
-export function computeBloquesDia(routine: RoutineInput, session: SessionInput | null): BloqueDia[] {
+// ultimaCargaPorNombre: nombre de ejercicio normalizado -> última carga que el
+// alumno usó en un día anterior. La consulta vive en lib/exercises.ts; acá sólo
+// se lee, para que este módulo siga siendo puro. Si no se pasa, ultimaCarga
+// queda en null (es el caso de /week, que no la necesita).
+export function computeBloquesDia(
+  routine: RoutineInput,
+  session: SessionInput | null,
+  ultimaCargaPorNombre?: Map<string, string>,
+): BloqueDia[] {
   const setLogsPorEjercicio = new Map<string, Map<number, SetLogInput>>();
   for (const log of session?.setLogs ?? []) {
     let porSerie = setLogsPorEjercicio.get(log.exerciseId);
@@ -63,16 +74,18 @@ export function computeBloquesDia(routine: RoutineInput, session: SessionInput |
         const log = porSerie?.get(setNumber);
         setsEstado.push(
           log
-            ? { setNumber, completed: log.completed, loadUsed: log.loadUsed, rpe: log.rpe }
-            : { setNumber, completed: false, loadUsed: null, rpe: null },
+            ? { setNumber, completed: log.completed, loadUsed: log.loadUsed, repsDone: log.repsDone, rpe: log.rpe }
+            : { setNumber, completed: false, loadUsed: null, repsDone: null, rpe: null },
         );
       }
       return {
         id: exercise.id,
         name: exercise.name,
+        type: exercise.type,
         sets: exercise.sets,
         reps: exercise.reps,
         load: exercise.load,
+        ultimaCarga: ultimaCargaPorNombre?.get(normalizeExerciseName(exercise.name)) ?? null,
         restSeconds: exercise.restSeconds,
         completo: setsEstado.every((s) => s.completed),
         setsEstado,

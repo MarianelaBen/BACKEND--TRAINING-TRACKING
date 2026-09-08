@@ -96,6 +96,10 @@ model Exercise {
   blockId     String
   block       Block   @relation(fields: [blockId], references: [id], onDelete: Cascade)
   name        String // "Press de banca"
+  // Movilidad / Fuerza / Metabólico ahora también se define por ejercicio, no
+  // sólo por rutina. Reusa el enum de Routine.type: el nombre quedó como
+  // RoutineType por historia, renombrarlo tocaría todo el código sin ganar nada.
+  type        RoutineType? // null en los ejercicios cargados antes de este cambio
   sets        Int // series
   reps        String // "8", "máx", "40 seg", "12 por lado" — texto a propósito
   load        String? // "60 kg", "Banda", "—"
@@ -171,6 +175,7 @@ model SetLog {
   setNumber  Int
   completed  Boolean   @default(false)
   loadUsed   String? // lo que el alumno realmente usó ese día
+  repsDone   Int? // las repeticiones que realmente hizo (Exercise.reps es el plan)
   rpe        Sensation? // "cómo te salió" por serie
 
   @@unique([sessionId, exerciseId, setNumber])

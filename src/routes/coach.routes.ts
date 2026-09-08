@@ -417,24 +417,24 @@ coachRouter.patch('/routines/:routineId', async (req, res) => {
         });
 
       if (!mismaEstructura) {
-        res.status(409).json({ error: 'No se puede editar la estructura: la rutina ya tiene asignaciones o sesiones asociadas. Sólo podés modificar las cargas.' });
+        res.status(409).json({ error: 'No se puede editar la estructura: la rutina ya tiene asignaciones o sesiones asociadas. Sólo podés modificar las cargas y el tipo de trabajo.' });
         return;
       }
 
-      const loadUpdates = current.blocks.flatMap((block, blockIndex) =>
-        block.exercises.map((exercise, exerciseIndex) =>
-          prisma.exercise.update({
+      // Carga y tipo de trabajo no cambian la estructura (no mueven series ni
+      // ejercicios), así que se pueden editar aunque la rutina ya esté en uso:
+      // el historial ya marcado sigue apuntando a los mismos Exercise.
+      const editablesUpdates = current.blocks.flatMap((block, blockIndex) =>
+        block.exercises.map((exercise, exerciseIndex) => {
+          const siguiente = blocksData![blockIndex]!.exercises.create[exerciseIndex]!;
+          return prisma.exercise.update({
             where: { id: exercise.id },
-            data: {
-              load:
-                blocksData![blockIndex]!.exercises.create[exerciseIndex]!
-                  .load,
-            },
-          }),
-        ),
+            data: { load: siguiente.load, type: siguiente.type },
+          });
+        }),
       );
       await prisma.$transaction([
-        ...loadUpdates,
+        ...editablesUpdates,
         prisma.routine.update({ where: { id: owned.id }, data }),
       ]);
       const updated = await prisma.routine.findUnique({
