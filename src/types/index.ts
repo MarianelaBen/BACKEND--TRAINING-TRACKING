@@ -35,7 +35,11 @@ export interface Ejercicio {
   // que existiera el campo — el front no puede asumir que siempre viene.
   type: TipoRutina | null;
   sets: number;
-  reps: string;
+  // Un ejercicio se mide por repeticiones O por tiempo, nunca por las dos:
+  // si reps viene con texto, durationSeconds es null, y al revés. Al alumno se
+  // le muestra sólo el que corresponda.
+  reps: string | null;
+  durationSeconds: number | null;
   load: string | null;
   restSeconds: number;
   orderIndex: number;
@@ -141,7 +145,9 @@ export interface EjercicioDia {
   name: string;
   type: TipoRutina | null;
   sets: number;
-  reps: string;
+  // Uno de los dos, nunca los dos: ver Ejercicio.
+  reps: string | null;
+  durationSeconds: number | null;
   load: string | null;
   // Lo último que el alumno levantó en un ejercicio con este mismo nombre, en
   // un día anterior. null si nunca lo hizo o si nunca anotó la carga. Se

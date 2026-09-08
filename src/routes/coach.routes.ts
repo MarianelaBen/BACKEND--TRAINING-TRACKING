@@ -410,6 +410,7 @@ coachRouter.patch('/routines/:routineId', async (req, res) => {
                 exercise.name === nextExercise.name &&
                 exercise.sets === nextExercise.sets &&
                 exercise.reps === nextExercise.reps &&
+                exercise.durationSeconds === nextExercise.durationSeconds &&
                 exercise.restSeconds === nextExercise.restSeconds
               );
             })

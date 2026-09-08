@@ -78,33 +78,37 @@ model Routine {
 }
 
 model Block {
-  id          String  @id @default(cuid())
-  routineId   String
-  routine     Routine @relation(fields: [routineId], references: [id], onDelete: Cascade)
-  letter      String // "A", "B", "C", "D"
-  name        String // "Fuerza principal"
-  mode        String? // "Series rectas", "AMRAP 12:00", "Circuito · 2 vueltas"
-  estMinutes  Int     @default(0)
-  note        String? @db.Text // "Nota de Chino" para el alumno
-  orderIndex  Int
+  id         String  @id @default(cuid())
+  routineId  String
+  routine    Routine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  letter     String // "A", "B", "C", "D"
+  name       String // "Fuerza principal"
+  mode       String? // "Series rectas", "AMRAP 12:00", "Circuito · 2 vueltas"
+  estMinutes Int     @default(0)
+  note       String? @db.Text // "Nota de Chino" para el alumno
+  orderIndex Int
 
   exercises Exercise[]
 }
 
 model Exercise {
-  id          String  @id @default(cuid())
-  blockId     String
-  block       Block   @relation(fields: [blockId], references: [id], onDelete: Cascade)
-  name        String // "Press de banca"
+  id              String       @id @default(cuid())
+  blockId         String
+  block           Block        @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  name            String // "Press de banca"
   // Movilidad / Fuerza / Metabólico ahora también se define por ejercicio, no
   // sólo por rutina. Reusa el enum de Routine.type: el nombre quedó como
   // RoutineType por historia, renombrarlo tocaría todo el código sin ganar nada.
-  type        RoutineType? // null en los ejercicios cargados antes de este cambio
-  sets        Int // series
-  reps        String // "8", "máx", "40 seg", "12 por lado" — texto a propósito
-  load        String? // "60 kg", "Banda", "—"
-  restSeconds Int     @default(0)
-  orderIndex  Int
+  type            RoutineType? // null en los ejercicios cargados antes de este cambio
+  sets            Int // series
+  // Un ejercicio se mide por repeticiones O por tiempo, nunca por las dos.
+  // La regla no se puede expresar en Prisma: va como validación en
+  // POST/PATCH /coach/routines y como CHECK en la migración.
+  reps            String? // "8", "máx", "12 por lado" — texto a propósito
+  durationSeconds Int? // plancha 45s, bici 5 min…
+  load            String? // "60 kg", "Banda", "—"
+  restSeconds     Int          @default(0)
+  orderIndex      Int
 
   setLogs SetLog[]
 }
@@ -167,13 +171,13 @@ model Session {
 }
 
 model SetLog {
-  id         String    @id @default(cuid())
+  id         String     @id @default(cuid())
   sessionId  String
-  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session    Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   exerciseId String
-  exercise   Exercise  @relation(fields: [exerciseId], references: [id])
+  exercise   Exercise   @relation(fields: [exerciseId], references: [id])
   setNumber  Int
-  completed  Boolean   @default(false)
+  completed  Boolean    @default(false)
   loadUsed   String? // lo que el alumno realmente usó ese día
   repsDone   Int? // las repeticiones que realmente hizo (Exercise.reps es el plan)
   rpe        Sensation? // "cómo te salió" por serie
@@ -203,14 +207,14 @@ model PersonalRecord {
 // ─────────────────────────────────────────────────────────────
 
 model Message {
-  id         String         @id @default(cuid())
-  studentId  String // el hilo pertenece a un alumno
-  student    StudentProfile @relation("StudentMessages", fields: [studentId], references: [id], onDelete: Cascade)
-  senderId   String
-  sender     User           @relation("MessageSender", fields: [senderId], references: [id])
-  body       String         @db.Text
-  sentAt     DateTime       @default(now())
-  readAt     DateTime?
+  id        String         @id @default(cuid())
+  studentId String // el hilo pertenece a un alumno
+  student   StudentProfile @relation("StudentMessages", fields: [studentId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User           @relation("MessageSender", fields: [senderId], references: [id])
+  body      String         @db.Text
+  sentAt    DateTime       @default(now())
+  readAt    DateTime?
 
   @@index([studentId, sentAt])
 }

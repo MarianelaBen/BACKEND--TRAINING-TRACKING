@@ -12,7 +12,8 @@ interface ExerciseInput {
   name: string;
   type: TipoRutina | null;
   sets: number;
-  reps: string;
+  reps: string | null;
+  durationSeconds: number | null;
   load: string | null;
   restSeconds: number;
 }
@@ -84,6 +85,7 @@ export function computeBloquesDia(
         type: exercise.type,
         sets: exercise.sets,
         reps: exercise.reps,
+        durationSeconds: exercise.durationSeconds,
         load: exercise.load,
         ultimaCarga: ultimaCargaPorNombre?.get(normalizeExerciseName(exercise.name)) ?? null,
         restSeconds: exercise.restSeconds,

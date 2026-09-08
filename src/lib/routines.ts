@@ -19,7 +19,8 @@ interface ExerciseRow {
   name: string;
   type: string | null;
   sets: number;
-  reps: string;
+  reps: string | null;
+  durationSeconds: number | null;
   load: string | null;
   restSeconds: number;
   orderIndex: number;
@@ -55,6 +56,7 @@ export function toRutina(routine: RoutineRow): Rutina {
       type: exercise.type as TipoRutina | null,
       sets: exercise.sets,
       reps: exercise.reps,
+      durationSeconds: exercise.durationSeconds,
       load: exercise.load,
       restSeconds: exercise.restSeconds,
       orderIndex: exercise.orderIndex,
@@ -90,13 +92,17 @@ export interface RoutineExerciseCreate {
   name: string;
   type: TipoRutina | null;
   sets: number;
-  reps: string;
+  reps: string | null;
+  durationSeconds: number | null;
   load: string | null;
   restSeconds: number;
   orderIndex: number;
 }
 
 const TIPOS_EJERCICIO: TipoRutina[] = ['FUERZA', 'METABOLICO', 'MOVILIDAD'];
+
+// Una hora por serie ya es un dedazo, no un ejercicio.
+const MAX_DURATION_SECONDS = 3600;
 
 export interface RoutineBlockCreate {
   letter: string;
@@ -158,8 +164,27 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
       if (!Number.isInteger(exercise.sets) || exercise.sets <= 0) {
         return { error: `blocks[${i}].exercises[${j}].sets tiene que ser un entero positivo` };
       }
-      if (typeof exercise.reps !== 'string' || exercise.reps.trim().length === 0) {
-        return { error: `blocks[${i}].exercises[${j}].reps es obligatorio` };
+      // Repeticiones O tiempo, nunca las dos. La base lo garantiza además con
+      // un CHECK; acá se valida para devolver un 400 con mensaje claro en vez
+      // de dejar que reviente el constraint.
+      const tieneReps = exercise.reps !== undefined && exercise.reps !== null;
+      const tieneDuracion = exercise.durationSeconds !== undefined && exercise.durationSeconds !== null;
+      if (tieneReps && (typeof exercise.reps !== 'string' || exercise.reps.trim().length === 0)) {
+        return { error: `blocks[${i}].exercises[${j}].reps inválido` };
+      }
+      if (
+        tieneDuracion &&
+        (!Number.isInteger(exercise.durationSeconds) ||
+          exercise.durationSeconds <= 0 ||
+          exercise.durationSeconds > MAX_DURATION_SECONDS)
+      ) {
+        return { error: `blocks[${i}].exercises[${j}].durationSeconds tiene que ser un entero entre 1 y ${MAX_DURATION_SECONDS}` };
+      }
+      if (tieneReps && tieneDuracion) {
+        return { error: `blocks[${i}].exercises[${j}]: un ejercicio se mide por repeticiones o por tiempo, no por las dos` };
+      }
+      if (!tieneReps && !tieneDuracion) {
+        return { error: `blocks[${i}].exercises[${j}]: falta reps o durationSeconds` };
       }
       if (exercise.load !== undefined && exercise.load !== null && typeof exercise.load !== 'string') {
         return { error: `blocks[${i}].exercises[${j}].load inválido` };
@@ -171,7 +196,8 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
         name: exercise.name,
         type: (exercise.type ?? null) as TipoRutina | null,
         sets: exercise.sets,
-        reps: exercise.reps,
+        reps: exercise.reps ?? null,
+        durationSeconds: exercise.durationSeconds ?? null,
         load: exercise.load ?? null,
         restSeconds: exercise.restSeconds ?? 0,
         orderIndex: j,
