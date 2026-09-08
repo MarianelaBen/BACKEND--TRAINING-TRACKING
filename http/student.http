@@ -280,3 +280,49 @@ Content-Type: application/json
 {
   "durationMinutes": 10
 }
+
+
+##########################################################################
+### Correcciones del 08/09 — repeticiones reales, última carga y rutina
+### del día en la semana.
+##########################################################################
+
+### 26. Marcar una serie anotando las repeticiones que realmente hizo
+### Esperado: 200, y en setsEstado esa serie vuelve con repsDone: 6.
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true,
+  "loadUsed": "62,5 kg",
+  "repsDone": 6,
+  "rpe": "AL_LIMITE"
+}
+
+
+### 27. repsDone fuera de rango → 400
+PUT {{baseUrl}}/student/days/2026-08-26/exercises/{{diaAsignado.response.body.$.bloques[0].exercises[0].id}}/sets/1
+Authorization: Bearer {{loginAlumna.response.body.token}}
+Content-Type: application/json
+
+{
+  "completed": true,
+  "repsDone": 500
+}
+
+
+### 28. La semana ahora dice qué rutina toca cada día
+### Esperado: el 2026-08-26 viene con rutina:{id,name,type}; los días de
+### descanso con rutina:null.
+GET {{baseUrl}}/student/week?start=2026-08-24
+Authorization: Bearer {{loginAlumna.response.body.token}}
+
+
+### 29. Última carga por ejercicio
+### Esperado: en un día POSTERIOR al 2026-08-26 con el mismo ejercicio
+### asignado, ese ejercicio trae ultimaCarga con lo último que levantó.
+### Ojo: se cruza por NOMBRE de ejercicio, no por id — cada rutina tiene
+### sus propios Exercise. Necesita que el coach le haya asignado otro día.
+GET {{baseUrl}}/student/days/2026-09-11
+Authorization: Bearer {{loginAlumna.response.body.token}}

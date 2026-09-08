@@ -369,3 +369,129 @@ Authorization: Bearer {{loginCoach.response.body.token}}
 ###
 DELETE {{baseUrl}}/coach/routines/{{rutinaParaEditar.response.body.id}}
 Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+##########################################################################
+### Correcciones del 08/09 — rutinas genéricas, personalización por alumno
+### y reasignación de días ya entrenados.
+### Requiere ADEMÁS: pnpm exec prisma migrate deploy (3 migraciones nuevas).
+##########################################################################
+
+### 41. Rutina genérica: sin peso ni repeticiones, y un ejercicio por tiempo
+### Esperado: 201. "Plancha" queda con durationSeconds y sin reps.
+# @name rutinaGenerica
+POST {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Full body — genérica",
+  "type": "FUERZA",
+  "blocks": [
+    {
+      "letter": "A",
+      "name": "Fuerza principal",
+      "exercises": [
+        { "name": "Sentadilla", "type": "FUERZA", "sets": 3 },
+        { "name": "Plancha", "type": "MOVILIDAD", "sets": 2, "durationSeconds": 45 }
+      ]
+    }
+  ]
+}
+
+
+### 42. Repeticiones Y tiempo juntos → 400
+POST {{baseUrl}}/coach/routines
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Imposible",
+  "type": "FUERZA",
+  "blocks": [
+    {
+      "letter": "A",
+      "name": "A",
+      "exercises": [{ "name": "X", "sets": 1, "reps": "8", "durationSeconds": 30 }]
+    }
+  ]
+}
+
+
+### 43. Asignar la genérica personalizando los ejercicios en la misma request
+### Esperado: 201, y el alumno ve 40 kg en Sentadilla, no el valor de la rutina.
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "routineId": "{{rutinaGenerica.response.body.id}}",
+  "date": "2026-09-11",
+  "overrides": [
+    {
+      "exerciseId": "{{rutinaGenerica.response.body.blocks.0.exercises.0.id}}",
+      "reps": "10",
+      "load": "40 kg"
+    }
+  ]
+}
+
+
+### 44. Personalizar un ejercicio después, con un PUT suelto
+PUT {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-11/exercises/{{rutinaGenerica.response.body.blocks.0.exercises.0.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "reps": "12",
+  "load": "42,5 kg"
+}
+
+
+### 45. Override con repeticiones y tiempo juntos → 400
+PUT {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-11/exercises/{{rutinaGenerica.response.body.blocks.0.exercises.0.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "reps": "12",
+  "durationSeconds": 40
+}
+
+
+### 46. Ejercicio que no es de la rutina de ese día → 404
+PUT {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-11/exercises/no-existe
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "load": "40 kg"
+}
+
+
+### 47. Reasignar un día que el alumno YA entrenó (antes era 409)
+### El 2026-08-26 tiene series marcadas por las pruebas de la etapa 4.
+### Esperado: 200 con merge:{conservadas,borradas}. Las series de ejercicios
+### que no están en la rutina nueva se pierden — el front avisa antes.
+POST {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments
+Authorization: Bearer {{loginCoach.response.body.token}}
+Content-Type: application/json
+
+{
+  "routineId": "{{rutinaGenerica.response.body.id}}",
+  "date": "2026-08-26"
+}
+
+
+### 48. Desasignar un día ya entrenado (antes era 409) → 204
+DELETE {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-08-26
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 49. Limpieza: desasignar el 2026-09-11 y borrar la rutina genérica
+DELETE {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments/2026-09-11
+Authorization: Bearer {{loginCoach.response.body.token}}
+
+###
+DELETE {{baseUrl}}/coach/routines/{{rutinaGenerica.response.body.id}}
+Authorization: Bearer {{loginCoach.response.body.token}}
