@@ -6,7 +6,10 @@ import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '.
 import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/progress.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { routineWithBlocksInclude } from '../lib/routines.js';
-import type { DiaDetalle, DiaSemana, SemanaAlumno } from '../types/index.js';
+import { toMarca } from '../lib/marcas.js';
+import { computeAdherence } from '../lib/adherence.js';
+import type { AssignmentForAdherence } from '../lib/adherence.js';
+import type { AlumnoFicha, DiaDetalle, DiaSemana, EstadoSesion, SemanaAlumno, TipoRutina } from '../types/index.js';
 
 declare global {
   namespace Express {
@@ -36,6 +39,109 @@ studentRouter.use(requireAuth, requireRole('STUDENT'), async (req, res, next) =>
   }
   req.studentProfileId = profile.id;
   next();
+});
+
+// Espejo de GET /coach/students/:studentId (misma forma, AlumnoFicha):
+// plan, suscripción y marcas propias. El alumno sólo puede ver las suyas,
+// así que no hace falta resolver ownership como del lado coach.
+studentRouter.get('/me', async (req, res) => {
+  const profile = await prisma.studentProfile.findUnique({
+    where: { id: req.studentProfileId! },
+    include: {
+      user: { select: { name: true, email: true, initials: true } },
+      records: { orderBy: { updatedAt: 'desc' } },
+    },
+  });
+
+  const body: AlumnoFicha = {
+    id: profile!.id,
+    userId: profile!.userId,
+    name: profile!.user.name,
+    email: profile!.user.email,
+    initials: profile!.user.initials,
+    plan: profile!.plan,
+    planStartDate: profile!.planStartDate ? profile!.planStartDate.toISOString() : null,
+    planActive: profile!.planActive,
+    nextPayment: profile!.nextPayment ? profile!.nextPayment.toISOString() : null,
+    records: profile!.records.map(toMarca),
+  };
+  res.json(body);
+});
+
+const MAX_ADHERENCE_DAYS = 180;
+
+// Espejo de GET /coach/students/:studentId/adherence: mismo parseo de
+// start/end (default = últimos 28 días) y mismo computeAdherence, pero sin
+// resolver ownership -- el alumno sólo puede ver la suya.
+studentRouter.get('/adherence', async (req, res) => {
+  const studentId = req.studentProfileId!;
+  const rawStart = req.query.start;
+  const rawEnd = req.query.end;
+
+  let end: string;
+  if (typeof rawEnd === 'string') {
+    if (!parseDateParam(rawEnd)) {
+      res.status(400).json({ error: 'end tiene que tener el formato YYYY-MM-DD' });
+      return;
+    }
+    end = rawEnd;
+  } else {
+    end = todayInGymTZ();
+  }
+
+  let start: string;
+  if (typeof rawStart === 'string') {
+    if (!parseDateParam(rawStart)) {
+      res.status(400).json({ error: 'start tiene que tener el formato YYYY-MM-DD' });
+      return;
+    }
+    start = rawStart;
+  } else {
+    start = addDays(end, -27);
+  }
+
+  if (start > end) {
+    res.status(400).json({ error: 'start tiene que ser anterior o igual a end' });
+    return;
+  }
+  const spanDays = (new Date(`${end}T00:00:00.000Z`).getTime() - new Date(`${start}T00:00:00.000Z`).getTime()) / 86_400_000;
+  if (spanDays > MAX_ADHERENCE_DAYS) {
+    res.status(400).json({ error: `El rango no puede superar los ${MAX_ADHERENCE_DAYS} días` });
+    return;
+  }
+
+  const rows = await prisma.assignment.findMany({
+    where: {
+      studentId,
+      date: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${end}T00:00:00.000Z`) },
+    },
+    select: {
+      date: true,
+      routine: {
+        select: { name: true, type: true, _count: { select: { blocks: true } } },
+      },
+      session: {
+        select: { blocksDone: true, blocksTotal: true, status: true, durationMinutes: true, sensation: true },
+      },
+    },
+    orderBy: { date: 'asc' },
+  });
+
+  const assignments: AssignmentForAdherence[] = rows.map((r) => ({
+    date: r.date,
+    routine: { name: r.routine.name, type: r.routine.type as TipoRutina, blocksTotal: r.routine._count.blocks },
+    session: r.session
+      ? {
+          blocksDone: r.session.blocksDone,
+          blocksTotal: r.session.blocksTotal,
+          status: r.session.status as EstadoSesion,
+          durationMinutes: r.session.durationMinutes,
+          sensation: r.session.sensation as Sensacion | null,
+        }
+      : null,
+  }));
+
+  res.json(computeAdherence(assignments, start, end));
 });
 
 studentRouter.get('/week', async (req, res) => {

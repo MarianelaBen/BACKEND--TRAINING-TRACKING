@@ -8,13 +8,13 @@ import type { RoutineBlockCreate } from '../lib/routines.js';
 import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
 import type { AssignmentForAdherence } from '../lib/adherence.js';
+import { toMarca } from '../lib/marcas.js';
 import type {
   AlumnoFicha,
   AlumnoResumen,
   Asignacion,
   DiaAsignacionCoach,
   EstadoSesion,
-  Marca,
   RutinaListado,
   Sensacion,
   TipoRutina,
@@ -79,17 +79,6 @@ async function resolveOwnedRecord(res: Response, studentId: string, recordId: st
     return null;
   }
   return record;
-}
-
-function toMarca(record: { id: string; studentId: string; exerciseName: string; value: string; note: string | null; updatedAt: Date }): Marca {
-  return {
-    id: record.id,
-    studentId: record.studentId,
-    exerciseName: record.exerciseName,
-    value: record.value,
-    note: record.note,
-    updatedAt: record.updatedAt.toISOString(),
-  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -384,20 +373,77 @@ coachRouter.patch('/routines/:routineId', async (req, res) => {
 
   let blocksData: RoutineBlockCreate[] | undefined;
   if (blocks !== undefined) {
-    const [assignmentCount, sessionCount] = await Promise.all([
-      prisma.assignment.count({ where: { routineId: owned.id } }),
-      prisma.session.count({ where: { routineId: owned.id } }),
-    ]);
-    if (assignmentCount > 0 || sessionCount > 0) {
-      res.status(409).json({ error: 'No se puede editar la estructura: la rutina ya tiene asignaciones o sesiones asociadas. Creá una rutina nueva.' });
-      return;
-    }
     const validated = validateBlocksInput(blocks);
     if ('error' in validated) {
       res.status(400).json({ error: validated.error });
       return;
     }
     blocksData = validated.blocks;
+
+    const [assignmentCount, sessionCount] = await Promise.all([
+      prisma.assignment.count({ where: { routineId: owned.id } }),
+      prisma.session.count({ where: { routineId: owned.id } }),
+    ]);
+    if (assignmentCount > 0 || sessionCount > 0) {
+      const current = await prisma.routine.findUnique({
+        where: { id: owned.id },
+        include: routineWithBlocksInclude,
+      });
+      const mismaEstructura =
+        current !== null &&
+        current.blocks.length === blocksData.length &&
+        current.blocks.every((block, blockIndex) => {
+          const nextBlock = blocksData![blockIndex];
+          const nextExercises = nextBlock?.exercises.create ?? [];
+          return (
+            nextBlock !== undefined &&
+            block.letter === nextBlock.letter &&
+            block.name === nextBlock.name &&
+            block.mode === nextBlock.mode &&
+            block.estMinutes === nextBlock.estMinutes &&
+            block.note === nextBlock.note &&
+            block.exercises.length === nextExercises.length &&
+            block.exercises.every((exercise, exerciseIndex) => {
+              const nextExercise = nextExercises[exerciseIndex];
+              return (
+                nextExercise !== undefined &&
+                exercise.name === nextExercise.name &&
+                exercise.sets === nextExercise.sets &&
+                exercise.reps === nextExercise.reps &&
+                exercise.restSeconds === nextExercise.restSeconds
+              );
+            })
+          );
+        });
+
+      if (!mismaEstructura) {
+        res.status(409).json({ error: 'No se puede editar la estructura: la rutina ya tiene asignaciones o sesiones asociadas. Sólo podés modificar las cargas.' });
+        return;
+      }
+
+      const loadUpdates = current.blocks.flatMap((block, blockIndex) =>
+        block.exercises.map((exercise, exerciseIndex) =>
+          prisma.exercise.update({
+            where: { id: exercise.id },
+            data: {
+              load:
+                blocksData![blockIndex]!.exercises.create[exerciseIndex]!
+                  .load,
+            },
+          }),
+        ),
+      );
+      await prisma.$transaction([
+        ...loadUpdates,
+        prisma.routine.update({ where: { id: owned.id }, data }),
+      ]);
+      const updated = await prisma.routine.findUnique({
+        where: { id: owned.id },
+        include: routineWithBlocksInclude,
+      });
+      res.json(toRutina(updated!));
+      return;
+    }
   }
 
   if (Object.keys(data).length === 0 && !blocksData) {
