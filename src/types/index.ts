@@ -263,6 +263,10 @@ export interface DiaAsignacionCoach {
   date: string;
   esDescanso: boolean;
   routine: RutinaResumen | null;
+  // Lo que Chino ya personalizó para este alumno ese día. Siempre un array:
+  // vacío si no hay nada personalizado, nunca undefined — el front usa
+  // undefined para detectar que el backend todavía no tiene este campo.
+  overrides: OverrideEjercicio[];
 }
 
 // Los valores que Chino le puso a UN ejercicio para UN alumno en UN día. Pisan

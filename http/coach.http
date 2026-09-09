@@ -495,3 +495,12 @@ Authorization: Bearer {{loginCoach.response.body.token}}
 ###
 DELETE {{baseUrl}}/coach/routines/{{rutinaGenerica.response.body.id}}
 Authorization: Bearer {{loginCoach.response.body.token}}
+
+
+### 50. La semana del coach trae lo ya personalizado de cada día
+### Esperado: cada día con rutina asignada trae overrides:[...] con lo que se
+### le puso a ESE alumno; los días sin nada personalizado traen [] (array
+### vacío, nunca undefined — el front usa undefined para detectar un backend
+### viejo). Corré antes el 43, que asigna con overrides.
+GET {{baseUrl}}/coach/students/{{listaAlumnos.response.body.$[1].id}}/assignments?start=2026-09-07
+Authorization: Bearer {{loginCoach.response.body.token}}

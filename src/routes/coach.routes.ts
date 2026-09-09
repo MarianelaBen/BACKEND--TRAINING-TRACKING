@@ -807,7 +807,10 @@ coachRouter.get('/students/:studentId/assignments', async (req, res) => {
 
   const assignments = await prisma.assignment.findMany({
     where: { studentId: student.id, date: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${end}T00:00:00.000Z`) } },
-    include: { routine: { select: { id: true, name: true, type: true } } },
+    include: {
+      routine: { select: { id: true, name: true, type: true } },
+      exerciseOverrides: true,
+    },
   });
   const porFecha = new Map(assignments.map((a) => [toDateString(a.date), a]));
 
@@ -819,6 +822,15 @@ coachRouter.get('/students/:studentId/assignments', async (req, res) => {
       date,
       esDescanso: !assignment,
       routine: assignment ? toRutinaResumen(assignment.routine) : null,
+      // Siempre array, nunca undefined: el front distingue "no hay nada
+      // personalizado" de "este backend todavía no manda el campo".
+      overrides:
+        assignment?.exerciseOverrides.map((o) => ({
+          exerciseId: o.exerciseId,
+          reps: o.reps,
+          durationSeconds: o.durationSeconds,
+          load: o.load,
+        })) ?? [],
     });
   }
   res.json(days);
