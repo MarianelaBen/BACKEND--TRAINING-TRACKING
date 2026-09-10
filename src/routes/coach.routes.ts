@@ -390,6 +390,18 @@ coachRouter.patch('/exercises/:exerciseId', async (req, res) => {
       return;
     }
     data.name = name.trim();
+    const duplicate = await prisma.exerciseCatalogItem.findFirst({
+      where: {
+        coachId: req.auth!.userId,
+        name: data.name,
+        id: { not: current.id },
+      },
+      select: { id: true },
+    });
+    if (duplicate) {
+      res.status(409).json({ error: 'Ya existe un ejercicio con ese nombre' });
+      return;
+    }
   }
   if (type !== undefined) {
     if (type !== null && (typeof type !== 'string' || !TIPOS_RUTINA.includes(type as TipoRutina))) {
