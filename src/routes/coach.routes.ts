@@ -32,6 +32,11 @@ const MAX_MENSAJE = 2000;
 const TIPOS_RUTINA: TipoRutina[] = ['FUERZA', 'METABOLICO', 'MOVILIDAD'];
 const MAX_ADHERENCE_DAYS = 180;
 
+function parseMuscleGroups(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return null;
+  return [...new Set(value.map((item) => (item as string).trim()).filter(Boolean))].slice(0, 20);
+}
+
 // El rol se valida siempre en el backend, y acá además el permiso sobre el
 // recurso concreto: un coach sólo puede ver/tocar sus propios alumnos
 // (StudentProfile.coachId === su propio userId).
@@ -322,6 +327,105 @@ coachRouter.get('/students/:studentId/adherence', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // RUTINAS (biblioteca del coach)
 // ─────────────────────────────────────────────────────────────
+
+// Catálogo reutilizable del coach.
+coachRouter.get('/exercises', async (req, res) => {
+  const items = await prisma.exerciseCatalogItem.findMany({
+    where: { coachId: req.auth!.userId },
+    orderBy: { name: 'asc' },
+  });
+  res.json(items.map((item) => ({ ...item, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })));
+});
+
+coachRouter.post('/exercises', async (req, res) => {
+  const { name, type, muscleGroups, description } = req.body ?? {};
+  if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 120) {
+    res.status(400).json({ error: 'name tiene que tener entre 1 y 120 caracteres' });
+    return;
+  }
+  if (type !== undefined && type !== null && (typeof type !== 'string' || !TIPOS_RUTINA.includes(type as TipoRutina))) {
+    res.status(400).json({ error: `type tiene que ser uno de: ${TIPOS_RUTINA.join(', ')}` });
+    return;
+  }
+  const muscles = parseMuscleGroups(muscleGroups ?? []);
+  if (!muscles) {
+    res.status(400).json({ error: 'muscleGroups tiene que ser un array de textos' });
+    return;
+  }
+  if (description !== undefined && description !== null && (typeof description !== 'string' || description.trim().length > 2000)) {
+    res.status(400).json({ error: 'description tiene que ser texto de hasta 2000 caracteres' });
+    return;
+  }
+  const duplicate = await prisma.exerciseCatalogItem.findUnique({
+    where: { coachId_name: { coachId: req.auth!.userId, name: name.trim() } },
+    select: { id: true },
+  });
+  if (duplicate) {
+    res.status(409).json({ error: 'Ya existe un ejercicio con ese nombre' });
+    return;
+  }
+  const item = await prisma.exerciseCatalogItem.create({
+    data: {
+      coachId: req.auth!.userId,
+      name: name.trim(),
+      type: (type ?? null) as TipoRutina | null,
+      muscleGroups: muscles,
+      description: typeof description === 'string' ? description.trim() || null : null,
+    },
+  });
+  res.status(201).json({ ...item, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() });
+});
+
+coachRouter.patch('/exercises/:exerciseId', async (req, res) => {
+  const current = await prisma.exerciseCatalogItem.findUnique({ where: { id: req.params.exerciseId } });
+  if (!current || current.coachId !== req.auth!.userId) {
+    res.status(404).json({ error: 'Ejercicio no encontrado' });
+    return;
+  }
+  const { name, type, muscleGroups, description } = req.body ?? {};
+  const data: { name?: string; type?: TipoRutina | null; muscleGroups?: string[]; description?: string | null } = {};
+  if (name !== undefined) {
+    if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 120) {
+      res.status(400).json({ error: 'name tiene que tener entre 1 y 120 caracteres' });
+      return;
+    }
+    data.name = name.trim();
+  }
+  if (type !== undefined) {
+    if (type !== null && (typeof type !== 'string' || !TIPOS_RUTINA.includes(type as TipoRutina))) {
+      res.status(400).json({ error: 'type inválido' });
+      return;
+    }
+    data.type = type as TipoRutina | null;
+  }
+  if (muscleGroups !== undefined) {
+    const muscles = parseMuscleGroups(muscleGroups);
+    if (!muscles) {
+      res.status(400).json({ error: 'muscleGroups tiene que ser un array de textos' });
+      return;
+    }
+    data.muscleGroups = muscles;
+  }
+  if (description !== undefined) {
+    if (description !== null && (typeof description !== 'string' || description.trim().length > 2000)) {
+      res.status(400).json({ error: 'description tiene que ser texto de hasta 2000 caracteres' });
+      return;
+    }
+    data.description = typeof description === 'string' ? description.trim() || null : null;
+  }
+  const item = await prisma.exerciseCatalogItem.update({ where: { id: current.id }, data });
+  res.json({ ...item, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() });
+});
+
+coachRouter.delete('/exercises/:exerciseId', async (req, res) => {
+  const current = await prisma.exerciseCatalogItem.findUnique({ where: { id: req.params.exerciseId }, select: { id: true, coachId: true } });
+  if (!current || current.coachId !== req.auth!.userId) {
+    res.status(404).json({ error: 'Ejercicio no encontrado' });
+    return;
+  }
+  await prisma.exerciseCatalogItem.delete({ where: { id: current.id } });
+  res.status(204).send();
+});
 
 coachRouter.get('/routines', async (req, res) => {
   const routines = await prisma.routine.findMany({

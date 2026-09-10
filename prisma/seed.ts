@@ -28,6 +28,20 @@ async function main() {
     },
   });
 
+  await prisma.exerciseCatalogItem.createMany({
+    data: [
+      { coachId: coach.id, name: 'Press de banca', type: 'FUERZA', muscleGroups: ['Pecho', 'Tríceps'], description: 'Empuje horizontal con barra.' },
+      { coachId: coach.id, name: 'Sentadilla con peso', type: 'FUERZA', muscleGroups: ['Cuádriceps', 'Glúteos'], description: 'Patrón de sentadilla con carga externa.' },
+      { coachId: coach.id, name: 'Remo con barra', type: 'FUERZA', muscleGroups: ['Espalda', 'Bíceps'], description: 'Tracción horizontal con barra.' },
+      { coachId: coach.id, name: 'Press militar con mancuernas', type: 'FUERZA', muscleGroups: ['Hombros', 'Tríceps'], description: 'Empuje vertical con mancuernas.' },
+      { coachId: coach.id, name: 'Búlgaras', type: 'FUERZA', muscleGroups: ['Cuádriceps', 'Glúteos'], description: 'Sentadilla unilateral con el pie trasero elevado.' },
+      { coachId: coach.id, name: 'Abdominales bicicleta', type: 'METABOLICO', muscleGroups: ['Abdominales'], description: 'Flexión y rotación alternada del tronco.' },
+      { coachId: coach.id, name: 'Estocadas con salto', type: 'METABOLICO', muscleGroups: ['Piernas', 'Glúteos'], description: 'Estocadas alternadas con salto.' },
+      { coachId: coach.id, name: 'Movilidad de cadera', type: 'MOVILIDAD', muscleGroups: ['Cadera'], description: 'Secuencia para mejorar el rango de movimiento de cadera.' },
+    ],
+    skipDuplicates: true,
+  });
+
   const alumna = await prisma.user.upsert({
     where: { email: 'mica@example.com' },
     update: {},

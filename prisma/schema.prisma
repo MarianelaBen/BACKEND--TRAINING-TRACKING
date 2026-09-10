@@ -33,6 +33,7 @@ model User {
 
   // Rutinas que creó (si es coach)
   routinesCreated Routine[] @relation("CoachRoutines")
+  exerciseCatalog ExerciseCatalogItem[] @relation("CoachExerciseCatalog")
 
   // Mensajes que mandó
   messagesSent Message[] @relation("MessageSender")
@@ -62,6 +63,21 @@ enum RoutineType {
   FUERZA
   METABOLICO
   MOVILIDAD
+}
+
+model ExerciseCatalogItem {
+  id           String       @id @default(cuid())
+  coachId      String
+  coach        User         @relation("CoachExerciseCatalog", fields: [coachId], references: [id], onDelete: Cascade)
+  name         String
+  type         RoutineType?
+  muscleGroups String[]     @default([])
+  description  String?      @db.Text
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@unique([coachId, name])
+  @@index([coachId])
 }
 
 model Routine {
