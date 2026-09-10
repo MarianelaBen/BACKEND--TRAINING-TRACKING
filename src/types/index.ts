@@ -92,6 +92,7 @@ export interface SetLog {
   // Lo que el alumno hizo de verdad. Ejercicio.reps es el plan del coach.
   repsDone: number | null;
   rpe: Sensacion | null;
+  note: string | null;
 }
 
 export interface Sesion {
@@ -125,6 +126,8 @@ export interface Mensaje {
   body: string;
   sentAt: string;
   readAt: string | null;
+  /** Sólo en la apertura del hilo: era nuevo para quien lo está mirando. */
+  wasUnread?: boolean;
 }
 
 // ── Vista alumno: rutina del día / semana (etapa 3) ──────────────────
@@ -146,6 +149,7 @@ export interface EstadoSet {
   loadUsed: string | null;
   repsDone: number | null;
   rpe: Sensacion | null;
+  note: string | null;
 }
 
 export interface EjercicioDia {
@@ -241,6 +245,27 @@ export interface DiaAdherencia {
   durationMinutes: number | null;
   sensation: Sensacion | null;
   estado: EstadoSesion;
+  comentarios: ComentarioSerie[];
+  seriesExtra: number;
+  series: DetalleSerie[];
+}
+
+export interface DetalleSerie {
+  exerciseName: string;
+  setNumber: number;
+  plannedSets: number;
+  completed: boolean;
+  loadUsed: string | null;
+  repsDone: number | null;
+  rpe: Sensacion | null;
+  note: string | null;
+}
+
+export interface ComentarioSerie {
+  exerciseName: string;
+  setNumber: number;
+  loadUsed: string | null;
+  note: string;
 }
 
 export interface Adherencia {

@@ -208,6 +208,7 @@ model SetLog {
   loadUsed   String? // lo que el alumno realmente usó ese día
   repsDone   Int? // las repeticiones que realmente hizo (Exercise.reps es el plan)
   rpe        Sensation? // "cómo te salió" por serie
+  note       String? // comentario opcional cuando usó una carga distinta
 
   @@unique([sessionId, exerciseId, setNumber])
   @@index([sessionId])

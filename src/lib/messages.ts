@@ -16,7 +16,7 @@ interface MessageRow {
   readAt: Date | null;
 }
 
-function toMensaje(m: MessageRow): Mensaje {
+function toMensaje(m: MessageRow, wasUnread = false): Mensaje {
   return {
     id: m.id,
     studentId: m.studentId,
@@ -24,21 +24,34 @@ function toMensaje(m: MessageRow): Mensaje {
     body: m.body,
     sentAt: m.sentAt.toISOString(),
     readAt: m.readAt ? m.readAt.toISOString() : null,
+    wasUnread,
   };
 }
 
 // Marca como leídos los mensajes del otro lado (efecto de abrir el hilo) y
 // devuelve el hilo completo ya actualizado.
 export async function fetchThreadAndMarkRead(studentId: string, viewerUserId: string): Promise<Mensaje[]> {
-  await prisma.message.updateMany({
-    where: { studentId, senderId: { not: viewerUserId }, readAt: null },
-    data: { readAt: new Date() },
-  });
   const messages = await prisma.message.findMany({
     where: { studentId },
     orderBy: { sentAt: 'asc' },
   });
-  return messages.map(toMensaje);
+  const unreadIds = messages
+    .filter((message) => message.senderId !== viewerUserId && message.readAt === null)
+    .map((message) => message.id);
+  const leidoEn = new Date();
+  if (unreadIds.length > 0) {
+    await prisma.message.updateMany({
+      where: { id: { in: unreadIds } },
+      data: { readAt: leidoEn },
+    });
+  }
+  const unread = new Set(unreadIds);
+  return messages.map((message) =>
+    toMensaje(
+      unread.has(message.id) ? { ...message, readAt: leidoEn } : message,
+      unread.has(message.id),
+    ),
+  );
 }
 
 // "Peek" sin marcar nada leído — para el puntito de la tab bar.

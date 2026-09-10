@@ -1,0 +1,1 @@
+ALTER TABLE "SetLog" ADD COLUMN "note" TEXT;

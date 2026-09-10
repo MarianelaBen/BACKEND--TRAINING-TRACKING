@@ -124,6 +124,14 @@ export function validateMedida(input: {
     return { error: '.reps inválido' };
   }
   if (
+    tieneReps &&
+    ((input.reps as string).trim().startsWith('-') ||
+      /^0(?:\D|$)/.test((input.reps as string).trim()) ||
+      (/^\d+$/.test((input.reps as string).trim()) && Number((input.reps as string).trim()) <= 0))
+  ) {
+    return { error: '.reps tiene que ser mayor a cero' };
+  }
+  if (
     tieneDuracion &&
     (!Number.isInteger(input.durationSeconds) ||
       (input.durationSeconds as number) <= 0 ||
@@ -139,6 +147,20 @@ export function validateMedida(input: {
     reps: tieneReps ? (input.reps as string) : null,
     durationSeconds: tieneDuracion ? (input.durationSeconds as number) : null,
   };
+}
+
+export function validateCarga(input: unknown): { error: string } | { load: string | null } {
+  if (input === undefined || input === null) return { load: null };
+  if (typeof input !== 'string') return { error: '.load inválido' };
+  const texto = input.trim();
+  if (texto.length === 0 || texto.toLowerCase() === 'sin carga') return { load: texto || null };
+  if (/^-/.test(texto)) return { error: '.load tiene que ser mayor a cero' };
+  const match = texto.match(/^(\d+(?:[.,]\d+)?)\s*(?:kg)?$/i);
+  if (match) {
+    const kg = Number(match[1]!.replace(',', '.'));
+    if (kg < 0.5 || kg > 500) return { error: '.load tiene que estar entre 0,5 y 500 kg' };
+  }
+  return { load: texto };
 }
 
 export interface RoutineBlockCreate {
@@ -207,8 +229,9 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
       if ('error' in medida) {
         return { error: `blocks[${i}].exercises[${j}]${medida.error}` };
       }
-      if (exercise.load !== undefined && exercise.load !== null && typeof exercise.load !== 'string') {
-        return { error: `blocks[${i}].exercises[${j}].load inválido` };
+      const carga = validateCarga(exercise.load);
+      if ('error' in carga) {
+        return { error: `blocks[${i}].exercises[${j}]${carga.error}` };
       }
       if (exercise.restSeconds !== undefined && (!Number.isInteger(exercise.restSeconds) || exercise.restSeconds < 0)) {
         return { error: `blocks[${i}].exercises[${j}].restSeconds tiene que ser un entero no negativo` };
@@ -219,7 +242,7 @@ export function validateBlocksInput(blocks: unknown): { error: string } | { bloc
         sets: exercise.sets,
         reps: medida.reps,
         durationSeconds: medida.durationSeconds,
-        load: exercise.load ?? null,
+        load: carga.load,
         restSeconds: exercise.restSeconds ?? 0,
         orderIndex: j,
       });

@@ -42,6 +42,7 @@ interface SetLogInput {
   loadUsed: string | null;
   repsDone: number | null;
   rpe: Sensacion | null;
+  note: string | null;
 }
 
 interface SessionInput {
@@ -99,10 +100,25 @@ export function computeBloquesDia(
         const log = porSerie?.get(setNumber);
         setsEstado.push(
           log
-            ? { setNumber, completed: log.completed, loadUsed: log.loadUsed, repsDone: log.repsDone, rpe: log.rpe }
-            : { setNumber, completed: false, loadUsed: null, repsDone: null, rpe: null },
+            ? { setNumber, completed: log.completed, loadUsed: log.loadUsed, repsDone: log.repsDone, rpe: log.rpe, note: log.note }
+            : { setNumber, completed: false, loadUsed: null, repsDone: null, rpe: null, note: null },
         );
       }
+      // Las series por encima del plan son trabajo real del alumno y se
+      // devuelven para poder revisarlas, pero no cambian si el plan quedó
+      // completo: la cantidad del coach es un objetivo, no un límite.
+      const extras = [...(porSerie?.values() ?? [])]
+        .filter((log) => log.setNumber > exercise.sets)
+        .sort((a, b) => a.setNumber - b.setNumber)
+        .map((log) => ({
+          setNumber: log.setNumber,
+          completed: log.completed,
+          loadUsed: log.loadUsed,
+          repsDone: log.repsDone,
+          rpe: log.rpe,
+          note: log.note,
+        }));
+      setsEstado.push(...extras);
       const { reps, durationSeconds, load } = resolveEjercicio(exercise, overridesPorEjercicio?.get(exercise.id));
       return {
         id: exercise.id,
@@ -114,7 +130,7 @@ export function computeBloquesDia(
         load,
         ultimaCarga: ultimaCargaPorNombre?.get(normalizeExerciseName(exercise.name)) ?? null,
         restSeconds: exercise.restSeconds,
-        completo: setsEstado.every((s) => s.completed),
+        completo: setsEstado.slice(0, exercise.sets).every((s) => s.completed),
         setsEstado,
       };
     });

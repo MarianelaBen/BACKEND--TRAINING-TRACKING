@@ -6,10 +6,11 @@
 // falta el resumen. blocksDone/blocksTotal/status ya quedan cacheados en
 // Session cada vez que se marca una serie (ver PUT .../sets/:setNumber en
 // student.routes.ts), así que este cálculo lee eso directo en vez de volver
-// a traer rutina + bloques + ejercicios + setLogs por cada asignación —
-// varios round-trips menos por consulta.
+// a traer el árbol entero por cada asignación. La única excepción son los
+// SetLog que tienen comentario: se incluyen para que el coach pueda leerlos
+// desde el historial sin hacer una request adicional por sesión.
 
-import type { Adherencia, DiaAdherencia, EstadoSesion, Sensacion, TipoRutina } from '../types/index.js';
+import type { Adherencia, ComentarioSerie, DetalleSerie, DiaAdherencia, EstadoSesion, Sensacion, TipoRutina } from '../types/index.js';
 import { toDateString } from './dates.js';
 
 export interface AssignmentForAdherence {
@@ -21,6 +22,9 @@ export interface AssignmentForAdherence {
     status: EstadoSesion;
     durationMinutes: number | null;
     sensation: Sensacion | null;
+    comentarios: ComentarioSerie[];
+    seriesExtra: number;
+    series: DetalleSerie[];
   } | null;
 }
 
@@ -42,6 +46,9 @@ export function computeAdherence(assignments: AssignmentForAdherence[], start: s
       durationMinutes: assignment.session?.durationMinutes ?? null,
       sensation: assignment.session?.sensation ?? null,
       estado: assignment.session?.status ?? 'SIN_HACER',
+      comentarios: assignment.session?.comentarios ?? [],
+      seriesExtra: assignment.session?.seriesExtra ?? 0,
+      series: assignment.session?.series ?? [],
     };
   });
 

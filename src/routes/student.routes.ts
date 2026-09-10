@@ -134,7 +134,17 @@ studentRouter.get('/adherence', async (req, res) => {
         select: { name: true, type: true, _count: { select: { blocks: true } } },
       },
       session: {
-        select: { blocksDone: true, blocksTotal: true, status: true, durationMinutes: true, sensation: true },
+        select: {
+          blocksDone: true,
+          blocksTotal: true,
+          status: true,
+          durationMinutes: true,
+          sensation: true,
+          setLogs: {
+            select: { setNumber: true, completed: true, loadUsed: true, repsDone: true, rpe: true, note: true, exercise: { select: { name: true, sets: true } } },
+            orderBy: { setNumber: 'asc' },
+          },
+        },
       },
     },
     orderBy: { date: 'asc' },
@@ -150,6 +160,23 @@ studentRouter.get('/adherence', async (req, res) => {
           status: r.session.status as EstadoSesion,
           durationMinutes: r.session.durationMinutes,
           sensation: r.session.sensation as Sensacion | null,
+          comentarios: r.session.setLogs.filter((log) => log.note !== null).map((log) => ({
+            exerciseName: log.exercise.name,
+            setNumber: log.setNumber,
+            loadUsed: log.loadUsed,
+            note: log.note!,
+          })),
+          seriesExtra: r.session.setLogs.filter((log) => log.setNumber > log.exercise.sets).length,
+          series: r.session.setLogs.map((log) => ({
+            exerciseName: log.exercise.name,
+            setNumber: log.setNumber,
+            plannedSets: log.exercise.sets,
+            completed: log.completed,
+            loadUsed: log.loadUsed,
+            repsDone: log.repsDone,
+            rpe: log.rpe as Sensacion | null,
+            note: log.note,
+          })),
         }
       : null,
   }));
@@ -280,6 +307,8 @@ const SENSACIONES: Sensacion[] = ['FACIL', 'JUSTA', 'AL_LIMITE', 'NO_PUDE'];
 // Tope de repeticiones por serie: no hay ejercicio real de 3 dígitos, así que
 // arriba de esto es un dedazo, no un dato.
 const MAX_REPS_DONE = 100;
+const MAX_SET_NOTE_LENGTH = 500;
+const MAX_SET_NUMBER = 100;
 
 // Idempotente: el cliente manda el setNumber exacto (ya lo tiene, GET /days/:date
 // expone cada slot numerado en setsEstado), así un reintento de red no duplica
@@ -299,8 +328,12 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
     return;
   }
   const setNumber = Number(req.params.setNumber);
+  if (setNumber > MAX_SET_NUMBER) {
+    res.status(400).json({ error: `setNumber no puede superar ${MAX_SET_NUMBER}` });
+    return;
+  }
 
-  const { completed, loadUsed, repsDone, rpe } = req.body ?? {};
+  const { completed, loadUsed, repsDone, rpe, note } = req.body ?? {};
   if (completed !== true) {
     res.status(400).json({ error: 'Por ahora sólo se puede marcar una serie como completada (completed: true)' });
     return;
@@ -313,11 +346,17 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
     res.status(400).json({ error: 'loadUsed inválido' });
     return;
   }
+  if (note !== undefined && note !== null) {
+    if (typeof note !== 'string' || note.trim().length > MAX_SET_NOTE_LENGTH) {
+      res.status(400).json({ error: `note tiene que ser texto de hasta ${MAX_SET_NOTE_LENGTH} caracteres` });
+      return;
+    }
+  }
   // Opcional, igual que loadUsed: si el alumno no lo anota, la serie se marca
   // lo mismo y repsDone queda null.
   if (repsDone !== undefined && repsDone !== null) {
-    if (!Number.isInteger(repsDone) || repsDone < 0 || repsDone > MAX_REPS_DONE) {
-      res.status(400).json({ error: `repsDone tiene que ser un entero entre 0 y ${MAX_REPS_DONE}` });
+    if (!Number.isInteger(repsDone) || repsDone < 1 || repsDone > MAX_REPS_DONE) {
+      res.status(400).json({ error: `repsDone tiene que ser un entero entre 1 y ${MAX_REPS_DONE}` });
       return;
     }
   }
@@ -340,14 +379,10 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
     res.status(404).json({ error: 'Ese ejercicio no pertenece a la rutina de este día' });
     return;
   }
-  if (setNumber > exercise.sets) {
-    res.status(400).json({ error: `Esta rutina tiene ${exercise.sets} series para este ejercicio` });
-    return;
-  }
-
   const loadUsedFinal: string | null = loadUsed ?? null;
   const repsDoneFinal: number | null = repsDone ?? null;
   const rpeFinal: Sensacion | null = rpe ?? null;
+  const noteFinal: string | null = typeof note === 'string' && note.trim().length > 0 ? note.trim() : null;
 
   const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
   const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
@@ -361,8 +396,16 @@ studentRouter.put('/days/:date/exercises/:exerciseId/sets/:setNumber', async (re
 
     await tx.setLog.upsert({
       where: { sessionId_exerciseId_setNumber: { sessionId: session.id, exerciseId, setNumber } },
-      create: { sessionId: session.id, exerciseId, setNumber, completed: true, loadUsed: loadUsedFinal, repsDone: repsDoneFinal, rpe: rpeFinal },
-      update: { completed: true, loadUsed: loadUsedFinal, repsDone: repsDoneFinal, rpe: rpeFinal },
+      create: { sessionId: session.id, exerciseId, setNumber, completed: true, loadUsed: loadUsedFinal, repsDone: repsDoneFinal, rpe: rpeFinal, note: noteFinal },
+      update: {
+        completed: true,
+        loadUsed: loadUsedFinal,
+        repsDone: repsDoneFinal,
+        rpe: rpeFinal,
+        // Clientes anteriores no conocen note: omitirlo no debe borrar una
+        // nota existente. Mandar null explícitamente sí la elimina.
+        ...(note !== undefined ? { note: noteFinal } : {}),
+      },
     });
 
     const setLogs = await tx.setLog.findMany({ where: { sessionId: session.id } });

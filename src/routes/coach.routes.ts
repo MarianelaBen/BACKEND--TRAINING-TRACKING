@@ -6,7 +6,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { addDays, mondayOf, parseDateParam, toDateString, todayInGymTZ } from '../lib/dates.js';
 import type { RoutineBlockCreate } from '../lib/routines.js';
-import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput, validateMedida } from '../lib/routines.js';
+import { routineWithBlocksInclude, toRutina, toRutinaResumen, validateBlocksInput, validateCarga, validateMedida } from '../lib/routines.js';
 import { computeAdherence } from '../lib/adherence.js';
 import { computeBloquesDia, summarizeBloques } from '../lib/progress.js';
 import { planMergeSetLogs } from '../lib/reassign.js';
@@ -269,7 +269,17 @@ coachRouter.get('/students/:studentId/adherence', async (req, res) => {
         select: { name: true, type: true, _count: { select: { blocks: true } } },
       },
       session: {
-        select: { blocksDone: true, blocksTotal: true, status: true, durationMinutes: true, sensation: true },
+        select: {
+          blocksDone: true,
+          blocksTotal: true,
+          status: true,
+          durationMinutes: true,
+          sensation: true,
+          setLogs: {
+            select: { setNumber: true, completed: true, loadUsed: true, repsDone: true, rpe: true, note: true, exercise: { select: { name: true, sets: true } } },
+            orderBy: { setNumber: 'asc' },
+          },
+        },
       },
     },
     orderBy: { date: 'asc' },
@@ -285,6 +295,23 @@ coachRouter.get('/students/:studentId/adherence', async (req, res) => {
           status: r.session.status as EstadoSesion,
           durationMinutes: r.session.durationMinutes,
           sensation: r.session.sensation as Sensacion | null,
+          comentarios: r.session.setLogs.filter((log) => log.note !== null).map((log) => ({
+            exerciseName: log.exercise.name,
+            setNumber: log.setNumber,
+            loadUsed: log.loadUsed,
+            note: log.note!,
+          })),
+          seriesExtra: r.session.setLogs.filter((log) => log.setNumber > log.exercise.sets).length,
+          series: r.session.setLogs.map((log) => ({
+            exerciseName: log.exercise.name,
+            setNumber: log.setNumber,
+            plannedSets: log.exercise.sets,
+            completed: log.completed,
+            loadUsed: log.loadUsed,
+            repsDone: log.repsDone,
+            rpe: log.rpe as Sensacion | null,
+            note: log.note,
+          })),
         }
       : null,
   }));
@@ -541,8 +568,9 @@ function validateOverridesInput(
     }
     vistos.add(item.exerciseId);
 
-    if (item.load !== undefined && item.load !== null && typeof item.load !== 'string') {
-      return { error: `overrides[${i}].load inválido` };
+    const carga = validateCarga(item.load);
+    if ('error' in carga) {
+      return { error: `overrides[${i}]${carga.error}` };
     }
     const medida = validateMedida(item);
     if ('error' in medida) {
@@ -553,7 +581,7 @@ function validateOverridesInput(
       exerciseId: item.exerciseId,
       reps: medida.reps,
       durationSeconds: medida.durationSeconds,
-      load: (item.load ?? null) as string | null,
+      load: carga.load,
     });
   }
 
@@ -646,6 +674,7 @@ coachRouter.post('/students/:studentId/assignments', async (req, res) => {
       loadUsed: log.loadUsed,
       repsDone: log.repsDone,
       rpe: log.rpe,
+      note: log.note,
     })),
     destino!,
   );
@@ -751,8 +780,9 @@ coachRouter.put('/students/:studentId/assignments/:date/exercises/:exerciseId', 
   }
 
   const { load } = req.body ?? {};
-  if (load !== undefined && load !== null && typeof load !== 'string') {
-    res.status(400).json({ error: 'load inválido' });
+  const carga = validateCarga(load);
+  if ('error' in carga) {
+    res.status(400).json({ error: `El ejercicio${carga.error}` });
     return;
   }
   const medida = validateMedida(req.body ?? {});
@@ -764,7 +794,7 @@ coachRouter.put('/students/:studentId/assignments/:date/exercises/:exerciseId', 
   const data = {
     reps: medida.reps,
     durationSeconds: medida.durationSeconds,
-    load: (load ?? null) as string | null,
+    load: carga.load,
   };
   const override = await prisma.assignmentExercise.upsert({
     where: { assignmentId_exerciseId: { assignmentId: assignment.id, exerciseId } },
