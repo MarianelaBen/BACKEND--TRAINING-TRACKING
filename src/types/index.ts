@@ -237,6 +237,12 @@ export interface AlumnoFicha {
   planStartDate: string | null;
   planActive: boolean;
   nextPayment: string | null;
+  goal: string | null;
+  experience: string | null;
+  trainingDaysPerWeek: number | null;
+  sessionMinutes: number | null;
+  limitations: string | null;
+  onboardingCompleted: boolean;
   records: Marca[];
 }
 

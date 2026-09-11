@@ -139,6 +139,12 @@ coachRouter.get('/students/:studentId', async (req, res) => {
     planStartDate: profile!.planStartDate ? profile!.planStartDate.toISOString() : null,
     planActive: profile!.planActive,
     nextPayment: profile!.nextPayment ? profile!.nextPayment.toISOString() : null,
+    goal: profile!.goal,
+    experience: profile!.experience,
+    trainingDaysPerWeek: profile!.trainingDaysPerWeek,
+    sessionMinutes: profile!.sessionMinutes,
+    limitations: profile!.limitations,
+    onboardingCompleted: profile!.onboardingCompletedAt !== null,
     records: profile!.records.map(toMarca),
   };
   res.json(body);

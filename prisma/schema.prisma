@@ -40,14 +40,20 @@ model User {
 }
 
 model StudentProfile {
-  id            String    @id @default(cuid())
-  userId        String    @unique
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  coachId       String? // qué coach lo lleva
-  plan          String? // "Hipertrofia · 5 días", "Iniciación · 3 días", ...
-  planStartDate DateTime?
-  planActive    Boolean   @default(true)
-  nextPayment   DateTime?
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coachId               String? // qué coach lo lleva
+  plan                  String? // "Hipertrofia · 5 días", "Iniciación · 3 días", ...
+  planStartDate         DateTime?
+  planActive            Boolean   @default(true)
+  nextPayment           DateTime?
+  goal                  String?
+  experience            String?
+  trainingDaysPerWeek   Int?
+  sessionMinutes        Int?
+  limitations           String?   @db.Text
+  onboardingCompletedAt DateTime?
 
   assignments Assignment[]
   sessions    Session[]

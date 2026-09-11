@@ -55,6 +55,79 @@ studentRouter.use(requireAuth, requireRole('STUDENT'), async (req, res, next) =>
   next();
 });
 
+// Respuestas breves que el coach usa como punto de partida para armar el plan.
+const EXPERIENCIAS = ['PRINCIPIANTE', 'INTERMEDIO', 'AVANZADO'] as const;
+
+function toOnboarding(profile: {
+  goal: string | null;
+  experience: string | null;
+  trainingDaysPerWeek: number | null;
+  sessionMinutes: number | null;
+  limitations: string | null;
+  onboardingCompletedAt: Date | null;
+}) {
+  return {
+    goal: profile.goal,
+    experience: profile.experience,
+    trainingDaysPerWeek: profile.trainingDaysPerWeek,
+    sessionMinutes: profile.sessionMinutes,
+    limitations: profile.limitations,
+    completed: profile.onboardingCompletedAt !== null,
+  };
+}
+
+studentRouter.get('/onboarding', async (req, res) => {
+  const profile = await prisma.studentProfile.findUniqueOrThrow({
+    where: { id: req.studentProfileId! },
+    select: {
+      goal: true,
+      experience: true,
+      trainingDaysPerWeek: true,
+      sessionMinutes: true,
+      limitations: true,
+      onboardingCompletedAt: true,
+    },
+  });
+  res.json(toOnboarding(profile));
+});
+
+studentRouter.put('/onboarding', async (req, res) => {
+  const { goal, experience, trainingDaysPerWeek, sessionMinutes, limitations } = req.body ?? {};
+  if (typeof goal !== 'string' || goal.trim().length === 0 || goal.trim().length > 120) {
+    res.status(400).json({ error: 'Elegí un objetivo válido' });
+    return;
+  }
+  if (typeof experience !== 'string' || !EXPERIENCIAS.includes(experience as (typeof EXPERIENCIAS)[number])) {
+    res.status(400).json({ error: 'Elegí tu nivel de experiencia' });
+    return;
+  }
+  if (!Number.isInteger(trainingDaysPerWeek) || trainingDaysPerWeek < 1 || trainingDaysPerWeek > 7) {
+    res.status(400).json({ error: 'Los días por semana tienen que estar entre 1 y 7' });
+    return;
+  }
+  if (!Number.isInteger(sessionMinutes) || sessionMinutes < 15 || sessionMinutes > 180) {
+    res.status(400).json({ error: 'La duración tiene que estar entre 15 y 180 minutos' });
+    return;
+  }
+  if (limitations !== undefined && limitations !== null && (typeof limitations !== 'string' || limitations.trim().length > 1000)) {
+    res.status(400).json({ error: 'Las limitaciones tienen que ser un texto de hasta 1000 caracteres' });
+    return;
+  }
+
+  const profile = await prisma.studentProfile.update({
+    where: { id: req.studentProfileId! },
+    data: {
+      goal: goal.trim(),
+      experience,
+      trainingDaysPerWeek,
+      sessionMinutes,
+      limitations: typeof limitations === 'string' ? limitations.trim() || null : null,
+      onboardingCompletedAt: new Date(),
+    },
+  });
+  res.json(toOnboarding(profile));
+});
+
 // Espejo de GET /coach/students/:studentId (misma forma, AlumnoFicha):
 // plan, suscripción y marcas propias. El alumno sólo puede ver las suyas,
 // así que no hace falta resolver ownership como del lado coach.
@@ -77,6 +150,12 @@ studentRouter.get('/me', async (req, res) => {
     planStartDate: profile!.planStartDate ? profile!.planStartDate.toISOString() : null,
     planActive: profile!.planActive,
     nextPayment: profile!.nextPayment ? profile!.nextPayment.toISOString() : null,
+    goal: profile!.goal,
+    experience: profile!.experience,
+    trainingDaysPerWeek: profile!.trainingDaysPerWeek,
+    sessionMinutes: profile!.sessionMinutes,
+    limitations: profile!.limitations,
+    onboardingCompleted: profile!.onboardingCompletedAt !== null,
     records: profile!.records.map(toMarca),
   };
   res.json(body);
