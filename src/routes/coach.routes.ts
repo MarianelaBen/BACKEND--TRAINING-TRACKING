@@ -12,6 +12,7 @@ import { computeBloquesDia, summarizeBloques } from '../lib/progress.js';
 import { planMergeSetLogs } from '../lib/reassign.js';
 import type { AssignmentForAdherence } from '../lib/adherence.js';
 import { toMarca } from '../lib/marcas.js';
+import { removeExerciseVideo, toExerciseCatalogItem, uploadExerciseVideo } from '../lib/exercise-videos.js';
 import type {
   AlumnoFicha,
   AlumnoResumen,
@@ -334,7 +335,7 @@ coachRouter.get('/exercises', async (req, res) => {
     where: { coachId: req.auth!.userId },
     orderBy: { name: 'asc' },
   });
-  res.json(items.map((item) => ({ ...item, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })));
+  res.json(items.map(toExerciseCatalogItem));
 });
 
 coachRouter.post('/exercises', async (req, res) => {
@@ -373,7 +374,7 @@ coachRouter.post('/exercises', async (req, res) => {
       description: typeof description === 'string' ? description.trim() || null : null,
     },
   });
-  res.status(201).json({ ...item, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() });
+  res.status(201).json(toExerciseCatalogItem(item));
 });
 
 coachRouter.patch('/exercises/:exerciseId', async (req, res) => {
@@ -426,16 +427,73 @@ coachRouter.patch('/exercises/:exerciseId', async (req, res) => {
     data.description = typeof description === 'string' ? description.trim() || null : null;
   }
   const item = await prisma.exerciseCatalogItem.update({ where: { id: current.id }, data });
-  res.json({ ...item, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() });
+  res.json(toExerciseCatalogItem(item));
+});
+
+coachRouter.post(
+  '/exercises/:exerciseId/video',
+  async (req, res, next) => {
+    const exerciseId = String(req.params.exerciseId);
+    const current = await prisma.exerciseCatalogItem.findUnique({
+      where: { id: exerciseId },
+      select: { coachId: true, videoFilename: true },
+    });
+    if (!current || current.coachId !== req.auth!.userId) {
+      res.status(404).json({ error: 'Ejercicio no encontrado' });
+      return;
+    }
+    res.locals.exerciseId = exerciseId;
+    res.locals.previousVideoFilename = current.videoFilename;
+    next();
+  },
+  uploadExerciseVideo,
+  async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: 'Seleccioná un video' });
+      return;
+    }
+
+    try {
+      const item = await prisma.exerciseCatalogItem.update({
+        where: { id: res.locals.exerciseId },
+        data: {
+          videoFilename: req.file.filename,
+          videoOriginalName: req.file.originalname.slice(0, 255),
+        },
+      });
+      void removeExerciseVideo(res.locals.previousVideoFilename).catch(console.error);
+      res.json(toExerciseCatalogItem(item));
+    } catch (error) {
+      await removeExerciseVideo(req.file.filename);
+      throw error;
+    }
+  },
+);
+
+coachRouter.delete('/exercises/:exerciseId/video', async (req, res) => {
+  const current = await prisma.exerciseCatalogItem.findUnique({
+    where: { id: String(req.params.exerciseId) },
+  });
+  if (!current || current.coachId !== req.auth!.userId) {
+    res.status(404).json({ error: 'Ejercicio no encontrado' });
+    return;
+  }
+  const item = await prisma.exerciseCatalogItem.update({
+    where: { id: current.id },
+    data: { videoFilename: null, videoOriginalName: null },
+  });
+  void removeExerciseVideo(current.videoFilename).catch(console.error);
+  res.json(toExerciseCatalogItem(item));
 });
 
 coachRouter.delete('/exercises/:exerciseId', async (req, res) => {
-  const current = await prisma.exerciseCatalogItem.findUnique({ where: { id: req.params.exerciseId }, select: { id: true, coachId: true } });
+  const current = await prisma.exerciseCatalogItem.findUnique({ where: { id: req.params.exerciseId }, select: { id: true, coachId: true, videoFilename: true } });
   if (!current || current.coachId !== req.auth!.userId) {
     res.status(404).json({ error: 'Ejercicio no encontrado' });
     return;
   }
   await prisma.exerciseCatalogItem.delete({ where: { id: current.id } });
+  void removeExerciseVideo(current.videoFilename).catch(console.error);
   res.status(204).send();
 });
 

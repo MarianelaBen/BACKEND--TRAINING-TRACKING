@@ -5,12 +5,14 @@ import type { NextFunction, Request, Response } from 'express';
 import { authRouter } from './routes/auth.routes.js';
 import { studentRouter } from './routes/student.routes.js';
 import { coachRouter } from './routes/coach.routes.js';
+import { EXERCISE_VIDEO_DIR } from './lib/exercise-videos.js';
 
 const app = express();
 app.use(express.json());
 // Sin cookies de sesión: la auth es por token en el header Authorization,
 // así que no hace falta credentials:true (eso es sólo para cookies cross-domain).
 app.use(cors({ origin: process.env.CORS_ORIGIN }));
+app.use('/uploads/exercises', express.static(EXERCISE_VIDEO_DIR));
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });

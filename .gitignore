@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 dist/
 build/
+uploads/
 
 # entorno — NUNCA subir secrets
 .env

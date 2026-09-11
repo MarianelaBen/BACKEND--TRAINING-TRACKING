@@ -7,7 +7,8 @@ import { computeBloquesDia, computeEmpezado, summarizeBloques } from '../lib/pro
 import type { OverrideInput } from '../lib/progress.js';
 import { countUnread, fetchThreadAndMarkRead, sendMessage } from '../lib/messages.js';
 import { routineWithBlocksInclude, toRutinaResumen } from '../lib/routines.js';
-import { fetchUltimaCargaPorNombre } from '../lib/exercises.js';
+import { fetchUltimaCargaPorNombre, normalizeExerciseName } from '../lib/exercises.js';
+import { exerciseVideoUrl } from '../lib/exercise-videos.js';
 import { toMarca } from '../lib/marcas.js';
 import { computeAdherence } from '../lib/adherence.js';
 import type { AssignmentForAdherence } from '../lib/adherence.js';
@@ -278,12 +279,38 @@ studentRouter.get('/days/:date', async (req, res) => {
   const nombres = assignment.routine.blocks.flatMap((b) => b.exercises.map((e) => e.name));
   const ultimaCarga = await fetchUltimaCargaPorNombre(studentId, date, nombres);
 
-  const bloques = computeBloquesDia(
+  const bloquesBase = computeBloquesDia(
     assignment.routine,
     assignment.session,
     ultimaCarga,
     indexarOverrides(assignment.exerciseOverrides),
   );
+  const catalogo = await prisma.exerciseCatalogItem.findMany({
+    where: { coachId: assignment.routine.coachId },
+    select: {
+      name: true,
+      description: true,
+      muscleGroups: true,
+      videoFilename: true,
+      videoOriginalName: true,
+    },
+  });
+  const catalogoPorNombre = new Map(
+    catalogo.map((item) => [normalizeExerciseName(item.name), item]),
+  );
+  const bloques = bloquesBase.map((bloque) => ({
+    ...bloque,
+    exercises: bloque.exercises.map((exercise) => {
+      const teoria = catalogoPorNombre.get(normalizeExerciseName(exercise.name));
+      return {
+        ...exercise,
+        description: teoria?.description ?? null,
+        muscleGroups: teoria?.muscleGroups ?? [],
+        videoUrl: exerciseVideoUrl(teoria?.videoFilename ?? null),
+        videoOriginalName: teoria?.videoOriginalName ?? null,
+      };
+    }),
+  }));
   const { bloquesCompletos, bloquesTotal, completo } = summarizeBloques(bloques);
 
   const body: DiaDetalle = {

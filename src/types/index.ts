@@ -166,6 +166,10 @@ export interface EjercicioDia {
   // cruza por nombre a propósito: cada rutina tiene sus propios Exercise, así
   // que el mismo ejercicio en dos rutinas son dos filas con ids distintos.
   ultimaCarga: string | null;
+  description?: string | null;
+  muscleGroups?: string[];
+  videoUrl?: string | null;
+  videoOriginalName?: string | null;
   restSeconds: number;
   completo: boolean;
   setsEstado: EstadoSet[];
